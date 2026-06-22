@@ -1,0 +1,36 @@
+# Frontend / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+backend/.venv/
+
+# Local configuration / secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+backend/data/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
