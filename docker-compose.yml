@@ -1,0 +1,23 @@
+networks:
+  web:
+    external: true
+
+services:
+  notes-iut:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: notes-iut:latest
+    container_name: notes-iut
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - notes-iut-data:/app/data
+    networks:
+      - web
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+
+volumes:
+  notes-iut-data:
