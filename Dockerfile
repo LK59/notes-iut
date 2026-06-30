@@ -3,6 +3,12 @@ WORKDIR /app/frontend
 COPY frontend/package.json ./
 RUN npm install
 COPY frontend/ ./
+RUN find . -type f ! -path './node_modules/*' ! -path './dist/*' \
+    | sort \
+    | xargs sha256sum \
+    | sha256sum \
+    | cut -c1-12 > /tmp/frontend_build_id \
+    && printf "export const GENERATED_BUILD_ID = \"%s\";\n" "$(cat /tmp/frontend_build_id)" > src/generatedBuild.ts
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
@@ -31,6 +37,12 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 COPY backend/ ./backend/
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+RUN find backend frontend/dist -type f \
+    | sort \
+    | xargs sha256sum \
+    | sha256sum \
+    | cut -c1-12 > /tmp/app_build_id \
+    && python3 -c "from pathlib import Path; build=Path('/tmp/app_build_id').read_text().strip(); Path('backend/app/build_info.py').write_text(f'APP_BUILD_ID = {build!r}\\n')"
 
 RUN useradd -u 1001 -m notesiut \
     && mkdir -p /app/data \
