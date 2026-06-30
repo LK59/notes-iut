@@ -9,6 +9,8 @@ services:
       dockerfile: Dockerfile
     image: notes-iut:latest
     container_name: notes-iut
+    env_file:
+      - .env
     environment:
       - TZ=Europe/Paris
     volumes:

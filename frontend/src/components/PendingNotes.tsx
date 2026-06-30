@@ -36,7 +36,7 @@ export default function PendingNotes({ items, overrides, onChange }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-900 shadow-sm">
+    <div className="rounded-xl border border-sky-200/70 dark:border-sky-800/70 bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm">
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between gap-3 px-4 pt-4 pb-2 text-left hover:bg-sky-50 dark:hover:bg-slate-800/60 rounded-t-xl"

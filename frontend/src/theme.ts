@@ -3,6 +3,19 @@ import { useEffect, useState } from "react";
 type Theme = "light" | "dark";
 const STORAGE_KEY = "notes-iut-theme";
 
+/** Retourne true si le thème courant est sombre, de façon réactive (suit les changements via MutationObserver). */
+export function useDarkMode(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setDark(document.documentElement.classList.contains("dark"));
+    });
+    observer.observe(document.documentElement, { attributeFilter: ["class"] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;

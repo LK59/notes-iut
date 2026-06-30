@@ -1,4 +1,4 @@
-import type { AbsencesByDate, Releve } from "../types";
+import type { Releve } from "../types";
 import { numericNoteValue } from "../simulator";
 
 // Reprend les libellés du portail (correspondanceCodes) pour la décision de fin d'année.
@@ -17,27 +17,30 @@ const DECISION_ANNEE_LABELS: Record<string, string> = {
   ABL: "Année blanche",
 };
 
-export default function SemestreSummary({ releve, absences }: { releve: Releve; absences?: AbsencesByDate }) {
+export default function SemestreSummary({
+  releve,
+  trend,
+}: {
+  releve: Releve;
+  /** Écart de moyenne générale officielle vs le semestre précédent (null si indisponible). */
+  trend?: number | null;
+}) {
   const notes = releve.semestre.notes;
   const moyenne = numericNoteValue(notes?.value);
   const decisionAnnee = releve.semestre.decision_annee?.code;
   const decisionRcue = releve.semestre.decision_rcue ?? [];
   const hasDecisions = Boolean(decisionAnnee) || decisionRcue.length > 0;
-
-  // Le résumé du bulletin (semestre.absences) et le détail jour par jour de la passerelle
-  // viennent de deux systèmes de comptage distincts côté ScoDoc — ils peuvent désynchroniser
-  // en cas d'erreur de saisie admin. On le signale plutôt que de trancher arbitrairement.
-  const detailEvents = Object.values(absences ?? {}).flat();
-  const detailTotal = detailEvents.length;
-  const detailInjustifie = detailEvents.filter((e) => !e.justifie).length;
   const officialTotal = releve.semestre.absences?.total ?? 0;
   const officialInjustifie = releve.semestre.absences?.injustifie ?? 0;
-  const absencesMismatch =
-    detailTotal > 0 && (detailTotal !== officialTotal || detailInjustifie !== officialInjustifie);
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-sky-200 dark:border-slate-800 rounded-xl shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-      <Stat label="Moyenne générale" value={moyenne !== null ? moyenne.toFixed(2) : "—"} highlight />
+    <div className="bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg border border-sky-200/70 dark:border-slate-800/70 ring-1 ring-black/5 dark:ring-white/5 rounded-xl shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+      <Stat
+        label="Moyenne générale"
+        value={moyenne !== null ? moyenne.toFixed(2) : "—"}
+        highlight
+        trend={trend}
+      />
       <Stat
         label="Min / Moy. / Max promo"
         value={`${notes?.min ?? "—"} / ${notes?.moy ?? "—"} / ${notes?.max ?? "—"}`}
@@ -55,12 +58,6 @@ export default function SemestreSummary({ releve, absences }: { releve: Releve; 
         <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
           {releve.semestre.absences ? `${officialInjustifie} non justifiées / ${officialTotal} total` : "—"}
         </p>
-        {absencesMismatch && (
-          <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-            Détail ci-dessous : {detailInjustifie}/{detailTotal} — décompte ScoDoc non synchronisé (erreur de saisie
-            possible côté admin)
-          </p>
-        )}
       </div>
       {releve.semestre.situation && <Stat label="Décision" value={releve.semestre.situation} />}
       {releve.formation?.titre && <Stat label="Formation" value={releve.formation.titre} />}
@@ -69,13 +66,13 @@ export default function SemestreSummary({ releve, absences }: { releve: Releve; 
       )}
 
       {hasDecisions && (
-        <div className="col-span-full pt-2 border-t border-sky-50 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-500 flex flex-wrap gap-x-3 gap-y-1">
+        <div className="col-span-full pt-2 border-t border-sky-50 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
           {decisionAnnee && (
             <span>Décision annuelle : {DECISION_ANNEE_LABELS[decisionAnnee] ?? decisionAnnee}</span>
           )}
           {decisionRcue.map((c, i) => (
             <span key={i}>
-              {c.niveau.competence.titre} : {c.code}
+              {c.niveau?.competence?.titre ?? "?"} : {c.code}
             </span>
           ))}
         </div>
@@ -84,18 +81,36 @@ export default function SemestreSummary({ releve, absences }: { releve: Releve; 
   );
 }
 
-function Stat({ label, value, highlight = false }: { label: string; value: string; highlight?: boolean }) {
+function Stat({
+  label,
+  value,
+  highlight = false,
+  trend,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  trend?: number | null;
+}) {
   return (
     <div>
       <p className="text-xs text-slate-600 dark:text-slate-400">{label}</p>
       <p
         className={
           highlight
-            ? "text-2xl font-bold text-sky-700 dark:text-sky-300"
+            ? "text-2xl font-bold text-sky-700 dark:text-sky-300 flex items-baseline gap-1.5"
             : "text-sm font-medium text-slate-700 dark:text-slate-200"
         }
       >
         {value}
+        {trend !== undefined && trend !== null && Math.abs(trend) >= 0.01 && (
+          <span
+            title={`${trend > 0 ? "+" : ""}${trend.toFixed(2)} pt vs semestre précédent`}
+            className={`text-xs font-semibold ${trend > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
+          >
+            {trend > 0 ? "↑" : "↓"} {Math.abs(trend).toFixed(2)}
+          </span>
+        )}
       </p>
     </div>
   );

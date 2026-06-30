@@ -39,4 +39,15 @@ USER notesiut
 VOLUME ["/app/data"]
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000"]
+
+# curl a été retiré ci-dessus : on utilise python3 (déjà présent, image slim) plutôt que de
+# réinstaller un paquet juste pour le healthcheck. /api/health ne dépend d'aucune session ni
+# appel réseau externe, donc ce test détecte un process bloqué (deadlock, thread figé), pas
+# seulement un crash — ce que "restart: unless-stopped" seul ne couvre pas.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)" || exit 1
+
+# --proxy-headers + --forwarded-allow-ips='*' : le conteneur n'est joignable que depuis le
+# réseau docker interne (derrière nginx-proxy-manager, pas de port publié), donc on peut faire
+# confiance à X-Forwarded-For pour récupérer la vraie IP cliente (utile pour le rate-limit login).
+CMD ["uvicorn", "app.main:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]

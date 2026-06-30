@@ -1,4 +1,10 @@
 const PREFIX = "notes-iut-cache:";
+const SIM_PREFIX = "notes-iut-sim:";
+const VERSION_KEY = "notes-iut-cache-version";
+// À incrémenter chaque fois que le format des données mises en cache change (nouveaux champs,
+// nouvelle façon de calculer les agrégats...) : ça force tous les clients à repartir d'un cache
+// vide au lieu de réutiliser une structure périmée potentiellement incompatible.
+const CURRENT_VERSION = "2";
 
 /** Cache localStorage best-effort : ne doit jamais faire planter l'appelant (quota, mode privé...). */
 export function cacheSet(key: string, value: unknown): void {
@@ -33,4 +39,28 @@ export function clearCache(prefixes: string[] = [PREFIX]): void {
   } catch {
     // best effort
   }
+}
+
+/**
+ * À appeler une fois au démarrage de l'app. Si la version de cache stockée ne correspond pas
+ * à CURRENT_VERSION (premier chargement après ce déploi), on vide le cache hors-ligne et les
+ * simulations en cours de tous les clients, puis on enregistre la nouvelle version — évite que
+ * d'anciennes données mises en cache avant un changement de format ne refassent surface.
+ */
+export function ensureCacheVersion(): void {
+  try {
+    if (localStorage.getItem(VERSION_KEY) !== CURRENT_VERSION) {
+      clearCache([PREFIX, SIM_PREFIX]);
+      localStorage.setItem(VERSION_KEY, CURRENT_VERSION);
+    }
+    // Migration : supprime l'ancienne entrée de credentials en clair (remplacée par cookie serveur)
+    localStorage.removeItem("notes-iut-remember");
+  } catch {
+    // best effort
+  }
+}
+
+/** Vide toutes les données mises en cache (relevés + simulations) sans toucher aux identifiants mémorisés. */
+export function clearDataCache(): void {
+  clearCache([PREFIX, SIM_PREFIX]);
 }

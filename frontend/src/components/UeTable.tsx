@@ -115,8 +115,8 @@ export default function UeTable({
 
   return (
     <div
-      className={`rounded-xl border bg-white dark:bg-slate-900 shadow-sm ${
-        ueSimulated ? "border-amber-300 dark:border-amber-700 border-l-[3px]" : "border-sky-300 dark:border-sky-800"
+      className={`rounded-xl border bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm ${
+        ueSimulated ? "border-amber-300 dark:border-amber-700 border-l-[3px]" : "border-sky-300/70 dark:border-sky-800/70"
       }`}
     >
       <button
@@ -137,8 +137,8 @@ export default function UeTable({
                 ECTS {ue.ECTS.acquis ?? "-"}/{ue.ECTS.total ?? "-"}
               </Chip>
             )}
-            <Chip color="slate" title="Min / Moyenne classe / Max">
-              Min {fmt(ueAgg.min)} · Moy. cl. {fmt(ueAgg.moy)} · Max {fmt(ueAgg.max)}
+            <Chip color="slate" title="Moyenne de la classe sur cette UE">
+              Moy. cl. {fmt(ueAgg.moy)}
             </Chip>
             {rang && (
               <Chip color="sky" title="Rang dans la promo pour cette UE">
@@ -201,7 +201,7 @@ export default function UeTable({
                       return (
                         <div
                           key={moduleCode}
-                          className={`rounded-lg border bg-sky-50 dark:bg-slate-800/60 ${
+                          className={`rounded-lg border bg-sky-100/80 dark:bg-slate-800/60 ${
                             modSimulated
                               ? "border-amber-300 dark:border-amber-700 border-l-[3px]"
                               : "border-sky-200 dark:border-slate-700"
@@ -228,8 +228,8 @@ export default function UeTable({
                                 Moy. {fmt(modAgg.value)}
                               </span>
                               {hasEvaluations && (
-                                <Chip color="slate" title="Min / Moyenne classe / Max">
-                                  Min {fmt(modAgg.min)} · Moy. cl. {fmt(modAgg.moy)} · Max {fmt(modAgg.max)}
+                                <Chip color="slate" title="Moyenne de la classe sur ce module">
+                                  Moy. cl. {fmt(modAgg.moy)}
                                 </Chip>
                               )}
                               <Chip color="sky" title="Coefficient de ce module dans l'UE">

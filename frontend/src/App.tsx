@@ -7,7 +7,7 @@ export default function App() {
   const [username, setUsername] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
-  useEffect(() => {
+  function checkAuth() {
     me()
       .then(async (res) => {
         if (res.authenticated) {
@@ -18,7 +18,21 @@ export default function App() {
         // pas déclenchée automatiquement ici comme pour les autres appels — on la tente nous-mêmes.
         setUsername(await autoLoginIfRemembered());
       })
+      .catch(() => setUsername(null))
       .finally(() => setChecking(false));
+  }
+
+  useEffect(checkAuth, []);
+
+  // iOS Safari restaure parfois la page depuis son cache (bfcache) après une navigation
+  // arrière sans ré-exécuter les effets : on revérifie la session dans ce cas précis, sinon
+  // l'app peut sembler figée sur un état authentifié périmé.
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) checkAuth();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
   }, []);
 
   // Session serveur courte (4h) : si une requête API renvoie 401 en cours d'usage,
@@ -28,7 +42,15 @@ export default function App() {
     return () => setUnauthorizedHandler(null);
   }, []);
 
-  if (checking) return null;
+  // En cas de connexion instable, ne jamais rester sur un écran vide indéfiniment : même si
+  // le check initial traîne, on affiche un signe de vie plutôt qu'un écran blanc/bleu muet.
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950">
+        <div className="h-6 w-6 rounded-full border-2 border-sky-300 dark:border-sky-700 border-t-sky-600 dark:border-t-sky-300 animate-spin" />
+      </div>
+    );
+  }
 
   if (!username) {
     return <LoginPage onLoggedIn={setUsername} />;

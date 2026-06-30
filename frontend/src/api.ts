@@ -15,91 +15,35 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
-const REMEMBER_KEY = "notes-iut-remember";
-const REMEMBER_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 1 mois
+const REQUEST_TIMEOUT_MS = 15000;
 
-interface RememberedCreds {
-  username: string;
-  password: string;
-  expiresAt: number;
-}
-
-/** Stocke les identifiants en clair dans le navigateur (localStorage) pour 1 mois — voir l'avertissement affiché à l'utilisateur sur l'écran de connexion. */
-export function rememberCredentials(username: string, password: string) {
-  try {
-    const payload: RememberedCreds = { username, password, expiresAt: Date.now() + REMEMBER_DURATION_MS };
-    localStorage.setItem(REMEMBER_KEY, JSON.stringify(payload));
-  } catch {
-    // best effort
-  }
-}
-
-export function forgetCredentials() {
-  try {
-    localStorage.removeItem(REMEMBER_KEY);
-  } catch {
-    // best effort
-  }
-}
-
-function getRememberedCredentials(): { username: string; password: string } | null {
-  try {
-    const raw = localStorage.getItem(REMEMBER_KEY);
-    if (!raw) return null;
-    const creds: RememberedCreds = JSON.parse(raw);
-    if (!creds.expiresAt || Date.now() > creds.expiresAt) {
-      forgetCredentials();
-      return null;
-    }
-    return creds;
-  } catch {
-    return null;
-  }
-}
-
-let reauthInFlight: Promise<boolean> | null = null;
-
-/** Reconnexion silencieuse via les identifiants mémorisés, quand la session serveur a expiré. */
-function trySilentReauth(): Promise<boolean> {
-  const creds = getRememberedCredentials();
-  if (!creds) return Promise.resolve(false);
-  if (!reauthInFlight) {
-    reauthInFlight = rawLogin(creds.username, creds.password)
-      .then(() => true)
-      .catch(() => false)
-      .finally(() => {
-        reauthInFlight = null;
-      });
-  }
-  return reauthInFlight;
-}
-
-/** Tente une connexion avec les identifiants mémorisés ; renvoie le username si réussie, sinon null. */
-export async function autoLoginIfRemembered(): Promise<string | null> {
-  const creds = getRememberedCredentials();
-  if (!creds) return null;
-  try {
-    const res = await rawLogin(creds.username, creds.password);
-    return res.username;
-  } catch {
-    return null;
-  }
-}
-
-function rawLogin(username: string, password: string) {
-  return request<{ ok: boolean; username: string }>("/api/login", {
-    method: "POST",
-    body: JSON.stringify({ username, password }),
-  });
-}
-
+/**
+ * Sur connexion instable (typiquement iOS Safari en 4G faible), un fetch sans timeout peut
+ * rester pendant indéfiniment. On force une erreur réseau explicite au bout de 15s,
+ * traitée comme une panne par withOfflineFallback().
+ */
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
-  const resp = await fetch(path, {
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    ...init,
-  });
-  if (resp.status === 401 && path !== "/api/login") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let resp: Response;
+  try {
+    resp = await fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      ...init,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Délai dépassé — connexion trop lente ou instable.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  // /api/refresh est lui-même le mécanisme de reauth — pas de boucle infinie.
+  if (resp.status === 401 && path !== "/api/login" && path !== "/api/refresh") {
     if (!retried && (await trySilentReauth())) {
       return request<T>(path, init, true);
     }
@@ -113,10 +57,36 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
 }
 
 /**
- * Network-first : on tente toujours le réseau d'abord, jamais de lecture cache préventive
- * (la donnée du portail prime). Le cache local n'est utilisé en repli que si on est
- * effectivement hors-ligne (navigator.onLine === false) ou si fetch échoue avant même
- * d'obtenir une réponse HTTP (panne réseau) — pas pour masquer une vraie erreur serveur.
+ * Reconnexion silencieuse via le cookie remember httpOnly (géré par le serveur).
+ * Retourne true si une nouvelle session a été créée avec succès.
+ */
+let reauthInFlight: Promise<boolean> | null = null;
+function trySilentReauth(): Promise<boolean> {
+  if (!reauthInFlight) {
+    reauthInFlight = request<{ ok: boolean; username: string }>("/api/refresh", { method: "POST" })
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => { reauthInFlight = null; });
+  }
+  return reauthInFlight;
+}
+
+/**
+ * Tente une reconnexion via le cookie remember sans ressaisie du mot de passe.
+ * Appelée au démarrage quand /api/me indique que la session est expirée.
+ */
+export async function autoLoginIfRemembered(): Promise<string | null> {
+  try {
+    const res = await request<{ ok: boolean; username: string }>("/api/refresh", { method: "POST" });
+    return res.username;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Network-first : on tente toujours le réseau d'abord. Le cache local n'est utilisé
+ * en repli que si on est hors-ligne ou si fetch échoue avant d'obtenir une réponse HTTP.
  */
 async function withOfflineFallback<T>(cacheKey: string, fetcher: () => Promise<T>): Promise<T> {
   try {
@@ -133,12 +103,14 @@ async function withOfflineFallback<T>(cacheKey: string, fetcher: () => Promise<T
   }
 }
 
-export function login(username: string, password: string) {
-  return rawLogin(username, password);
+export function login(username: string, password: string, remember = false) {
+  return request<{ ok: boolean; username: string }>("/api/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password, remember }),
+  });
 }
 
 export function logout() {
-  forgetCredentials();
   clearCache(["notes-iut-cache:", "notes-iut-sim:"]);
   return request<{ ok: boolean }>("/api/logout", { method: "POST" });
 }

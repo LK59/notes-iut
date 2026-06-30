@@ -20,7 +20,15 @@ class UserSession:
 _STORE: dict[str, UserSession] = {}
 
 
+def _purge_expired() -> None:
+    now = time.time()
+    expired = [sid for sid, s in _STORE.items() if now - s.created_at > SESSION_TTL_SECONDS]
+    for sid in expired:
+        _STORE.pop(sid, None)
+
+
 def create_session(username: str, scodoc: ScodocSession) -> str:
+    _purge_expired()
     sid = secrets.token_urlsafe(32)
     _STORE[sid] = UserSession(username=username, scodoc=scodoc)
     return sid

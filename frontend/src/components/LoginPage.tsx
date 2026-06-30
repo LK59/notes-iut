@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { login, rememberCredentials, forgetCredentials } from "../api";
+import { login } from "../api";
 import ThemeToggle from "./ThemeToggle";
 
 export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: string) => void }) {
@@ -24,12 +24,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
     setError(null);
     setLoading(true);
     try {
-      const res = await login(username, password);
-      if (remember) {
-        rememberCredentials(username, password);
-      } else {
-        forgetCredentials();
-      }
+      const res = await login(username, password, remember);
       onLoggedIn(res.username);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Échec de la connexion");
@@ -39,20 +34,20 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950 relative">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-sky-50 via-sky-50 to-sky-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 relative px-4">
       <div className="absolute top-4 right-4">
         <ThemeToggle />
       </div>
       <form
         onSubmit={handleSubmit}
-        className="bg-white dark:bg-slate-900 border border-sky-200 dark:border-slate-800 p-8 rounded-xl shadow-md w-full max-w-sm space-y-4"
+        className="bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-xl border border-sky-200/70 dark:border-slate-700/70 ring-1 ring-black/5 dark:ring-white/5 p-8 rounded-2xl shadow-xl shadow-sky-900/5 dark:shadow-black/40 w-full max-w-sm space-y-4"
       >
         <h1 className="text-xl font-semibold text-sky-950 dark:text-sky-100">Notes IUT Annecy</h1>
         <p className="text-sm text-slate-600 dark:text-slate-400">Connecte-toi avec ton compte CAS pour voir tes relevés.</p>
-        <p className="text-xs text-slate-500 dark:text-slate-500 bg-sky-50 dark:bg-slate-800/60 border border-sky-200 dark:border-slate-700 rounded-md p-2">
-          Le mot de passe n'est jamais enregistré : il est transmis une seule fois, en direct et en HTTPS, au CAS
-          officiel de l'université (cas-uds.grenet.fr) pour authentification, exactement comme le ferait un navigateur.
-          Rien n'est stocké sur disque côté serveur.
+        <p className="text-xs text-slate-500 dark:text-slate-400 bg-sky-50 dark:bg-slate-800/60 border border-sky-200 dark:border-slate-700 rounded-md p-2">
+          Le mot de passe est transmis une seule fois, en direct et en HTTPS, au CAS officiel de
+          l'université (cas-uds.grenet.fr) pour authentification — exactement comme le ferait un
+          navigateur.
         </p>
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Identifiant</label>
@@ -87,10 +82,11 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
             Se souvenir de moi (1 mois)
           </label>
           {remember && (
-            <p className="mt-1 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md p-2">
-              L'identifiant et le mot de passe seront stockés en clair dans ce navigateur pendant 1 mois, pour te
-              reconnecter automatiquement sans ressaisie. Ne coche pas sur un appareil partagé ou public. La
-              déconnexion manuelle effacera ces identifiants.
+            <p className="mt-1 text-xs text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-md p-2">
+              Tes identifiants sont chiffrés (AES-256) et stockés de façon sécurisée sur ce serveur
+              pendant 1 mois. Ton navigateur reçoit un cookie de reconnexion — jamais ton mot de
+              passe. La déconnexion manuelle révoque immédiatement l'accès. Ne coche pas sur un
+              appareil partagé.
             </p>
           )}
         </div>

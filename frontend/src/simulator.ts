@@ -35,11 +35,14 @@ export function manualKey(group: "ressources" | "saes", moduleCode: string): str
 }
 
 /**
- * Moyenne + extrêmes agrégés. Le "min/moy/max classe" d'un module ou d'une UE est une
- * estimation : moyenne pondérée des min/moy/max de chaque évaluation/module qui le compose
- * (même pondération que pour la moyenne de l'élève). C'est une approximation raisonnable,
- * pas le vrai classement ScoDoc — on ne fabrique donc volontairement aucun "rang" à ce niveau,
- * qui lui ne peut pas être déduit honnêtement de simples bornes min/moy/max.
+ * Moyenne agrégée (+ extrêmes, uniquement au niveau évaluation). La moyenne de classe d'un
+ * module/UE peut être obtenue en pondérant les moyennes de classe de ses évaluations/modules
+ * (linéaire, donc exact : la moyenne d'une somme pondérée égale la somme pondérée des
+ * moyennes). En revanche min/max ne s'agrègent PAS ainsi : le min de chaque évaluation n'est
+ * presque jamais obtenu par le même élève, donc moyenne-pondérer ces min produirait un
+ * minimum de module/UE fictif, plus extrême que ce qu'aucun élève réel n'a obtenu. On ne
+ * calcule donc min/max qu'au niveau d'une évaluation individuelle (donnée brute de l'API),
+ * jamais en les recombinant à un niveau supérieur.
  */
 export interface Agg {
   value: number | null;
@@ -51,7 +54,7 @@ export interface Agg {
 const EMPTY_AGG: Agg = { value: null, min: null, moy: null, max: null };
 
 function weightedAggregate(items: { agg: Agg; weight: number }[]): Agg {
-  const dims: (keyof Agg)[] = ["value", "min", "moy", "max"];
+  const dims: (keyof Agg)[] = ["value", "moy"];
   const result = { ...EMPTY_AGG };
   for (const dim of dims) {
     let total = 0;
@@ -104,7 +107,12 @@ export function moduleMoyenne(
   return moduleAggregate(mod, group, moduleCode, overrides).value;
 }
 
-/** Agrégat (moyenne + extrêmes estimés) d'une UE, recalculé à partir des modules qui la composent. */
+/**
+ * Agrégat (moyenne + extrêmes estimés) d'une UE, recalculé à partir des modules qui la
+ * composent, PUIS ajusté du bonus/malus de l'UE (ex. bonus sport/engagement) — sans ça, la
+ * moyenne d'UE recalculée ici (nécessaire pour supporter la simulation) serait systématiquement
+ * inférieure à la vraie moyenne ScoDoc pour toute UE bénéficiant d'un bonus.
+ */
 export function ueAggregate(ue: Ue, releve: Releve, overrides: Record<string, number>): Agg {
   const items: { agg: Agg; weight: number }[] = [];
   for (const [group, summaries] of [
@@ -118,7 +126,12 @@ export function ueAggregate(ue: Ue, releve: Releve, overrides: Record<string, nu
       items.push({ agg: moduleAggregate(mod, group, moduleCode, overrides), weight: toNumber(summary.coef, 1) });
     }
   }
-  return weightedAggregate(items);
+  const agg = weightedAggregate(items);
+  if (ue.type === 1 || agg.value === null) return agg;
+  const bonus = toNumber(ue.bonus);
+  const malus = toNumber(ue.malus);
+  if (bonus === 0 && malus === 0) return agg;
+  return { ...agg, value: Math.min(20, Math.max(0, agg.value + bonus - malus)) };
 }
 
 export function ueMoyenne(ue: Ue, releve: Releve, overrides: Record<string, number>): number | null {

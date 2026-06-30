@@ -1,10 +1,10 @@
 const SECTIONS = [
   { id: "resume", label: "Résumé" },
-  { id: "absences", label: "Absences" },
   { id: "notes-a-saisir", label: "Notes à saisir" },
   { id: "objectif", label: "Objectif" },
-  { id: "graphiques", label: "Graphiques" },
+  { id: "matieres", label: "Récap matières" },
   { id: "detail-ue", label: "Détail par UE" },
+  { id: "absences", label: "Absences" },
 ];
 
 export default function SectionNav() {

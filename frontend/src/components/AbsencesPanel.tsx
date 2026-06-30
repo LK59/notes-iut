@@ -28,7 +28,13 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export default function AbsencesPanel({ absences }: { absences: AbsencesByDate | undefined }) {
+interface Props {
+  absences: AbsencesByDate | undefined;
+  /** Total/injustifié officiels du bulletin (semestre.absences), pour comparer au détail jour par jour. */
+  officialAbsences?: { total: number; injustifie: number };
+}
+
+export default function AbsencesPanel({ absences, officialAbsences }: Props) {
   const [open, setOpen] = useState(false);
 
   const dates = Object.keys(absences || {}).sort((a, b) => (a < b ? 1 : -1)); // plus récent d'abord
@@ -37,6 +43,14 @@ export default function AbsencesPanel({ absences }: { absences: AbsencesByDate |
     (sum, d) => sum + (absences?.[d]?.filter((e) => !e.justifie).length ?? 0),
     0
   );
+
+  // Le résumé du bulletin (semestre.absences) et le détail jour par jour de la passerelle
+  // viennent de deux systèmes de comptage distincts côté ScoDoc — ils peuvent désynchroniser
+  // en cas d'erreur de saisie admin. On le signale plutôt que de trancher arbitrairement.
+  const mismatch =
+    officialAbsences !== undefined &&
+    total > 0 &&
+    (total !== officialAbsences.total || nonJustifiees !== officialAbsences.injustifie);
 
   if (total === 0) {
     return (
@@ -47,7 +61,7 @@ export default function AbsencesPanel({ absences }: { absences: AbsencesByDate |
   }
 
   return (
-    <div className="rounded-xl border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-900 shadow-sm">
+    <div className="rounded-xl border border-sky-200/70 dark:border-sky-800/70 bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm">
       <button
         onClick={() => setOpen((o) => !o)}
         className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-sky-50 dark:hover:bg-slate-800/60 rounded-t-xl"
@@ -62,6 +76,12 @@ export default function AbsencesPanel({ absences }: { absences: AbsencesByDate |
             )}
           </h2>
           <p className="text-xs text-slate-600 dark:text-slate-400">Détail jour par jour, créneau par créneau.</p>
+          {mismatch && officialAbsences && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+              Bulletin officiel : {officialAbsences.injustifie}/{officialAbsences.total} — décompte ScoDoc non
+              synchronisé (erreur de saisie possible côté admin)
+            </p>
+          )}
         </div>
         <Chevron open={open} />
       </button>
@@ -72,7 +92,7 @@ export default function AbsencesPanel({ absences }: { absences: AbsencesByDate |
             <div key={date} className="px-4 py-2">
               <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">{formatDate(date)}</p>
               <div className="space-y-1">
-                {absences![date].map((ev) => (
+                {(absences?.[date] ?? []).map((ev) => (
                   <div key={ev.idAbs} className="flex items-center justify-between gap-2 text-xs flex-wrap">
                     <span className="text-slate-600 dark:text-slate-300">
                       {formatHeure(ev.debut)}–{formatHeure(ev.fin)} · {ev.matiereComplet} · {ev.enseignant}

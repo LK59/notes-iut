@@ -11,11 +11,27 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="theme-color" content="#0369a1" />
+    <meta name="color-scheme" content="light dark" />
     <script>
       (function () {
-        var stored = localStorage.getItem("notes-iut-theme");
-        var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-        if (dark) document.documentElement.classList.add("dark");
+        var dark;
+        try {
+          var stored = localStorage.getItem("notes-iut-theme");
+          dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+        } catch (e) {
+          dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        }
+        // Applique immédiatement le fond correct AVANT que le CSS Tailwind se charge :
+        // sans ça, Firefox en dark mode affiche un canvas noir (color-scheme: dark) pendant
+        // le chargement du JS/CSS, d'où l'écran noir signalé. Chrome démarre en blanc par
+        // défaut, donc l'effet est moins visible — mais Firefox respecte strictement la
+        // couleur de fond du navigateur selon le color-scheme système.
+        if (dark) {
+          document.documentElement.classList.add("dark");
+          document.documentElement.style.background = "#020617";
+        } else {
+          document.documentElement.style.background = "#f0f9ff";
+        }
       })();
     </script>
   </head>
