@@ -49,3 +49,11 @@ def get_session(sid: str | None) -> UserSession | None:
 def delete_session(sid: str | None) -> None:
     if sid:
         _STORE.pop(sid, None)
+
+
+def session_stats() -> dict:
+    _purge_expired()
+    return {
+        "active_sessions": len(_STORE),
+        "ttl_seconds": SESSION_TTL_SECONDS,
+    }

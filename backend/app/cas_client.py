@@ -16,6 +16,15 @@ from dataclasses import dataclass
 import requests
 from bs4 import BeautifulSoup
 
+from .errors import (
+    CasUnexpectedResponse,
+    CasUnavailable,
+    InvalidCredentials,
+    ScodocInvalidPayload,
+    ScodocUnavailable,
+)
+from .scodoc_payloads import validate_premiere_connexion_payload
+
 CAS_BASE = "https://cas-uds.grenet.fr"
 SITE_BASE = "https://notes.iut-acy.univ-smb.fr"
 DO_AUTH_URL = f"{SITE_BASE}/services/doAuth.php"
@@ -25,25 +34,33 @@ EXECUTION_RE = re.compile(r'name="execution" value="([^"]+)"')
 logger = logging.getLogger("notes_iut.cas")
 
 
-class CasAuthError(Exception):
-    pass
-
-
 @dataclass
 class ScodocSession:
     session: requests.Session
+    bootstrap_data: dict | None = None
 
     def post_data(self, query: str, **params) -> dict:
         # data.php lit ses paramètres via $_GET (même en POST) : il faut donc les
         # passer en query string, pas dans le corps de la requête.
         url = f"{SITE_BASE}/services/data.php"
-        resp = self.session.post(
-            url,
-            params={"q": query, **params},
-            headers={"Content-type": "application/x-www-form-urlencoded"},
-            timeout=20,
-        )
-        resp.raise_for_status()
+        try:
+            resp = self.session.post(
+                url,
+                params={"q": query, **params},
+                headers={"Content-type": "application/x-www-form-urlencoded"},
+                timeout=20,
+            )
+            resp.raise_for_status()
+        except requests.Timeout as exc:
+            raise ScodocUnavailable("Le portail de notes met trop de temps a repondre.") from exc
+        except requests.ConnectionError as exc:
+            raise ScodocUnavailable("Le portail de notes est injoignable.") from exc
+        except requests.HTTPError as exc:
+            if resp.status_code >= 500:
+                raise ScodocUnavailable() from exc
+            raise ScodocInvalidPayload(f"Reponse HTTP inattendue du portail : {resp.status_code}") from exc
+        except requests.RequestException as exc:
+            raise ScodocUnavailable() from exc
         try:
             return resp.json()
         except ValueError:
@@ -53,7 +70,7 @@ class ScodocSession:
                 resp.url,
                 resp.text[:1500],
             )
-            raise
+            raise ScodocInvalidPayload("Le portail de notes n'a pas renvoye de JSON valide.")
 
     def premiere_connexion(self) -> dict:
         return self.post_data("dataPremièreConnexion")
@@ -117,8 +134,17 @@ def login(username: str, password: str) -> ScodocSession:
     # doAuth.php, sans ticket, redirige (302) vers le CAS avec le bon `service`
     # généré par phpCAS lui-même (basé sur HTTP_HOST, sans le chemin) : on laisse
     # requests suivre cette redirection pour atterrir sur la vraie page de login.
-    resp = session.get(DO_AUTH_URL, params={"href": f"{SITE_BASE}/"}, timeout=20)
-    resp.raise_for_status()
+    try:
+        resp = session.get(DO_AUTH_URL, params={"href": f"{SITE_BASE}/"}, timeout=20)
+        resp.raise_for_status()
+    except requests.Timeout as exc:
+        raise CasUnavailable("Le service de connexion met trop de temps a repondre.") from exc
+    except requests.ConnectionError as exc:
+        raise CasUnavailable("Le service de connexion est injoignable.") from exc
+    except requests.HTTPError as exc:
+        raise CasUnavailable() from exc
+    except requests.RequestException as exc:
+        raise CasUnavailable() from exc
     login_url = resp.url
 
     match = EXECUTION_RE.search(resp.text)
@@ -126,7 +152,7 @@ def login(username: str, password: str) -> ScodocSession:
         soup = BeautifulSoup(resp.text, "html.parser")
         field = soup.find("input", {"name": "execution"})
         if not field or not field.get("value"):
-            raise CasAuthError("Impossible de récupérer le jeton 'execution' depuis la page CAS")
+            raise CasUnexpectedResponse("Impossible de recuperer le jeton de connexion CAS.")
         execution = field["value"]
     else:
         execution = match.group(1)
@@ -138,17 +164,27 @@ def login(username: str, password: str) -> ScodocSession:
         "_eventId": "submit",
         "geolocation": "",
     }
-    resp = session.post(
-        f"{CAS_BASE}/login",
-        data=post_data,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": CAS_BASE,
-            "Referer": login_url,
-        },
-        allow_redirects=False,
-        timeout=20,
-    )
+    try:
+        resp = session.post(
+            f"{CAS_BASE}/login",
+            data=post_data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": CAS_BASE,
+                "Referer": login_url,
+            },
+            allow_redirects=False,
+            timeout=20,
+        )
+    except requests.Timeout as exc:
+        raise CasUnavailable("Le service de connexion met trop de temps a repondre.") from exc
+    except requests.ConnectionError as exc:
+        raise CasUnavailable("Le service de connexion est injoignable.") from exc
+    except requests.RequestException as exc:
+        raise CasUnavailable() from exc
+
+    if resp.status_code >= 500:
+        raise CasUnavailable()
 
     if resp.status_code not in (301, 302, 303, 307, 308):
         message = _extract_cas_error(resp.text)
@@ -161,13 +197,25 @@ def login(username: str, password: str) -> ScodocSession:
                 resp.headers.get("Set-Cookie"),
                 resp.text[:1500],
             )
-        raise CasAuthError(message)
+            raise CasUnexpectedResponse(message)
+        raise InvalidCredentials(message)
 
     location = resp.headers.get("Location")
     if not location or "ticket=" not in location:
-        raise CasAuthError("Réponse CAS inattendue : pas de ticket dans la redirection")
+        raise CasUnexpectedResponse("Reponse CAS inattendue : pas de ticket dans la redirection.")
 
-    resp = session.get(location, timeout=20)
-    resp.raise_for_status()
+    try:
+        resp = session.get(location, timeout=20)
+        resp.raise_for_status()
+    except requests.Timeout as exc:
+        raise ScodocUnavailable("Le portail de notes met trop de temps a valider la session.") from exc
+    except requests.ConnectionError as exc:
+        raise ScodocUnavailable("Le portail de notes est injoignable pendant la validation de session.") from exc
+    except requests.HTTPError as exc:
+        raise ScodocUnavailable() from exc
+    except requests.RequestException as exc:
+        raise ScodocUnavailable() from exc
 
-    return ScodocSession(session=session)
+    scodoc = ScodocSession(session=session)
+    scodoc.bootstrap_data = validate_premiere_connexion_payload(scodoc.premiere_connexion())
+    return scodoc
