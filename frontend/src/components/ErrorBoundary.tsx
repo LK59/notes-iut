@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { isChunkLoadError, recoverFromChunkLoadError, resetChunkRecoveryState } from "../chunkRecovery";
 import { clearDataCache } from "../offlineCache";
 
 interface Props {
@@ -8,9 +9,9 @@ interface Props {
 interface State {
   error: Error | null;
   autoReloading: boolean;
+  chunkReloadFailed: boolean;
 }
 
-const CHUNK_ERROR_RE = /fetch dynamically imported module|Importing a module script failed|Unable to preload CSS/i;
 const CHUNK_RELOAD_KEY = "notes-iut-boundary-reload";
 
 /**
@@ -24,35 +25,36 @@ const CHUNK_RELOAD_KEY = "notes-iut-boundary-reload";
  * cache corrompues ou incompatibles (nav privée, mise à jour de format…).
  */
 export default class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null, autoReloading: false };
+  state: State = { error: null, autoReloading: false, chunkReloadFailed: false };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
-    if (CHUNK_ERROR_RE.test(error.message ?? "")) {
+    if (isChunkLoadError(error)) {
       if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
         sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
-        clearDataCache();
-        // On retourne autoReloading=true pour afficher un spinner le temps du rechargement
-        // (window.location.reload() n'est pas synchrone, il faut un état intermédiaire)
-        setTimeout(() => window.location.reload(), 0);
-        return { error, autoReloading: true };
+        const reloading = recoverFromChunkLoadError(null, error);
+        return { error, autoReloading: reloading, chunkReloadFailed: !reloading };
       }
+      return { error, autoReloading: false, chunkReloadFailed: true };
     }
-    return { error, autoReloading: false };
+    return { error, autoReloading: false, chunkReloadFailed: false };
   }
 
   private handleClearAndReload = () => {
     clearDataCache();
+    resetChunkRecoveryState();
     sessionStorage.removeItem(CHUNK_RELOAD_KEY);
     window.location.reload();
   };
 
   private handleReload = () => {
+    resetChunkRecoveryState();
     sessionStorage.removeItem(CHUNK_RELOAD_KEY);
     window.location.reload();
   };
 
   private handleLogout = () => {
     clearDataCache();
+    resetChunkRecoveryState();
     sessionStorage.removeItem(CHUNK_RELOAD_KEY);
     fetch("/api/logout", { method: "POST", credentials: "include" })
       .catch(() => {})
@@ -60,7 +62,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   };
 
   render() {
-    const { error, autoReloading } = this.state;
+    const { error, autoReloading, chunkReloadFailed } = this.state;
 
     if (!error) return this.props.children;
 
@@ -76,14 +78,16 @@ export default class ErrorBoundary extends Component<Props, State> {
       <div className="min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950 px-4 text-center">
         <div className="max-w-sm space-y-4">
           <p className="text-slate-700 dark:text-slate-200">
-            Une erreur inattendue est survenue. Si le problème persiste, vide le cache pour repartir sur des données propres.
+            {chunkReloadFailed
+              ? "Une nouvelle version de l'application est disponible. Recharge pour récupérer les derniers fichiers."
+              : "Une erreur inattendue est survenue. Tu peux recharger, vider les donnees locales de cet appareil, ou te reconnecter."}
           </p>
           <div className="flex flex-col sm:flex-row gap-2 justify-center flex-wrap">
             <button
               onClick={this.handleClearAndReload}
               className="rounded-md bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
             >
-              Vider le cache et recharger
+              Vider les donnees locales
             </button>
             <button
               onClick={this.handleReload}

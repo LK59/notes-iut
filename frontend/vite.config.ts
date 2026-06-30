@@ -7,6 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      cleanupOutdatedCaches: true,
       // Le manifest est géré manuellement dans public/manifest.json
       manifest: false,
       // Activation immédiate sans attendre la fermeture des autres onglets

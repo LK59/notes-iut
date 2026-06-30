@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { getReleve, getSemestres, logout } from "../api";
+import { clearServerCache, getReleve, getSemestres, logout } from "../api";
 import { cacheGet, cacheSet, clearDataCache } from "../offlineCache";
 import type { AbsencesByDate, PremiereConnexionResponse, Releve, ReleveResponse, Semestre } from "../types";
 import { moyenneGenerale, newlyPublishedIds, numericNoteValue, pendingItems, ueAggregate, ueMoyenne } from "../simulator";
@@ -20,6 +20,11 @@ import ViewToggle from "./ViewToggle";
 import MatieresRecap from "./MatieresRecap";
 import { useViewMode } from "../viewMode";
 import { useOnline } from "../useOnline";
+import { getGradeHistory, recordGradeHistory, type GradeHistoryItem } from "../gradeHistory";
+import GradeHistoryPanel from "./GradeHistoryPanel";
+import { APP_VERSION, BUILD_ID } from "../version";
+import SessionsPanel from "./SessionsPanel";
+import AdminPanel from "./AdminPanel";
 
 // Recharts pèse lourd dans le bundle : on ne le charge que si la vue Graphique est ouverte.
 const GraphiquesView = lazy(() => import("./GraphiquesView"));
@@ -49,7 +54,11 @@ function saveSimulation(semestreId: string, overrides: Record<string, number>) {
   }
 }
 
-export default function Dashboard({ username, onLoggedOut }: { username: string; onLoggedOut: () => void }) {
+function officialSemesterAverage(releve: Releve): number | null {
+  return numericNoteValue(releve.semestre?.notes?.value);
+}
+
+export default function Dashboard({ username, isAdmin, onLoggedOut }: { username: string; isAdmin?: boolean; onLoggedOut: () => void }) {
   const [bootstrap, setBootstrap] = useState<PremiereConnexionResponse | null>(null);
   const [semestreId, setSemestreId] = useState<string | null>(null);
   const [releve, setReleve] = useState<Releve | null>(null);
@@ -57,6 +66,7 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
   const [newIds, setNewIds] = useState<Set<number>>(new Set());
   const [evolution, setEvolution] = useState<SemestrePoint[]>([]);
   const [allReleves, setAllReleves] = useState<Record<string, Releve>>({});
+  const [gradeHistory, setGradeHistory] = useState<GradeHistoryItem[]>([]);
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -66,6 +76,8 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [printMode, setPrintMode] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const online = useOnline();
   const { view, setView } = useViewMode();
   // Tracks which semestreId already has its relevé loaded from the bootstrap response,
@@ -85,6 +97,7 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
           setReleve(data.relevé);
           setAbsences(data.absences);
           setNewIds(newlyPublishedIds(prev?.relevé ?? null, data.relevé));
+          setGradeHistory(recordGradeHistory(initial, prev?.relevé ?? null, data.relevé));
           setAllReleves({ [initial]: data.relevé });
           cacheSet(`releve:${initial}`, { relevé: data.relevé, absences: data.absences });
           bootstrapReleveId.current = initial;
@@ -98,6 +111,10 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
     if (!semestreId) return;
     setOverrides(loadSimulation(semestreId));
     setSelectedKey(null);
+    const knownReleve = allReleves[semestreId];
+    if (knownReleve) {
+      setReleve(knownReleve);
+    }
     // Skip if the relevé was already populated from the bootstrap response above.
     if (semestreId === bootstrapReleveId.current) {
       bootstrapReleveId.current = null;
@@ -107,12 +124,14 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
     // On lit le cache local AVANT le fetch (qui l'écrasera) pour détecter les notes
     // apparues depuis la dernière visite sur ce semestre.
     const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`);
+    setGradeHistory(getGradeHistory(semestreId));
     getReleve(semestreId)
       .then((data) => {
         if (cancelled) return;
         setReleve(data.relevé);
         setAbsences(data.absences);
         setNewIds(newlyPublishedIds(previous?.relevé ?? null, data.relevé));
+        setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
         setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
       })
       .catch((err) => {
@@ -139,7 +158,7 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
         try {
           const data = await getReleve(s.formsemestre_id);
           if (!cancelled) setAllReleves((prev) => ({ ...prev, [s.formsemestre_id]: data.relevé }));
-          return { titre: semestreLabel(s), moyenne: numericNoteValue(data.relevé.semestre?.notes?.value) };
+          return { titre: semestreLabel(s), moyenne: officialSemesterAverage(data.relevé) };
         } catch {
           return { titre: semestreLabel(s), moyenne: null };
         }
@@ -161,8 +180,13 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
     if (!bootstrap || !semestreId) return null;
     const idx = bootstrap.semestres.findIndex((s) => s.formsemestre_id === semestreId);
     if (idx <= 0) return null;
+    const currentPoint = evolution[idx];
+    const previousPoint = evolution[idx - 1];
+    if (currentPoint?.moyenne !== null && currentPoint?.moyenne !== undefined && previousPoint?.moyenne !== null && previousPoint?.moyenne !== undefined) {
+      return currentPoint.moyenne - previousPoint.moyenne;
+    }
     const prevId = bootstrap.semestres[idx - 1].formsemestre_id;
-    const curReleve = allReleves[semestreId];
+    const curReleve = allReleves[semestreId] ?? releve;
     const prevReleve = allReleves[prevId];
     if (!curReleve || !prevReleve) return null;
     function semMoy(r: Releve): number | null {
@@ -183,7 +207,7 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
     const prev = semMoy(prevReleve);
     if (cur === null || prev === null) return null;
     return cur - prev;
-  }, [bootstrap, semestreId, allReleves]);
+  }, [bootstrap, semestreId, evolution, allReleves, releve]);
 
   // Export PDF : on force tout en ouvert et en thème clair pour le rendu imprimé (les classes
   // dark: de Tailwind dépendent de la classe .dark sur <html>, pas du media query print), puis
@@ -277,6 +301,8 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
       setReleve(data.relevé);
       setAbsences(data.absences);
       setNewIds(newlyPublishedIds(previous?.relevé ?? null, data.relevé));
+      setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
+      setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
     } finally {
@@ -296,8 +322,11 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
     setResetting(true);
     setRefreshError(null);
     try {
+      const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`);
       const data = await getReleve(semestreId, true);
       setReleve(data.relevé);
+      setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
+      setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
     } finally {
@@ -395,6 +424,20 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
           {semestreId && <ExportMenu semestreId={semestreId} onExportSimulation={() => setPrintMode(true)} />}
           <ThemeToggle />
           <button
+            onClick={() => setSessionsOpen(true)}
+            className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
+          >
+            Sessions
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setAdminOpen(true)}
+              className="text-sm text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-sky-100 whitespace-nowrap"
+            >
+              Admin
+            </button>
+          )}
+          <button
             onClick={() => logout().catch(() => {}).finally(onLoggedOut)}
             className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
           >
@@ -414,6 +457,7 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
 
       <main className="print:hidden max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 overflow-x-hidden">
         {view === "complet" && <SectionNav />}
+        <GradeHistoryPanel items={gradeHistory} />
 
         {!online && (
           <div className="print:hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm rounded-lg p-3">
@@ -540,10 +584,14 @@ export default function Dashboard({ username, onLoggedOut }: { username: string;
       </main>
 
       <footer className="print:hidden border-t border-sky-200/60 dark:border-slate-800/60 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl px-4 sm:px-6 py-3 text-center">
-        <p className="text-xs text-slate-500 dark:text-slate-400">Notes IUT Annecy — simulateur non officiel</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Notes IUT Annecy — simulateur non officiel · v{APP_VERSION} · {BUILD_ID}
+        </p>
       </footer>
 
       <ScrollToTop />
+      {sessionsOpen && <SessionsPanel onClose={() => setSessionsOpen(false)} />}
+      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
     </div>
   );
 }
@@ -559,7 +607,7 @@ function Centered({ children, className = "" }: { children: React.ReactNode; cla
 function DashboardError({ message, onLoggedOut }: { message: string; onLoggedOut?: () => void }) {
   function handleClearAndReload() {
     clearDataCache();
-    window.location.reload();
+    clearServerCache().catch(() => {}).finally(() => window.location.reload());
   }
   function handleLogout() {
     logout().catch(() => {}).finally(() => onLoggedOut?.());
@@ -573,7 +621,7 @@ function DashboardError({ message, onLoggedOut }: { message: string; onLoggedOut
             onClick={handleClearAndReload}
             className="rounded-md bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
           >
-            Vider le cache et recharger
+            Vider les donnees locales
           </button>
           <button
             onClick={() => window.location.reload()}

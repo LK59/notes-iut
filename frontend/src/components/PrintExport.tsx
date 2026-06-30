@@ -79,6 +79,15 @@ export default function PrintExport({ releve, overrides, username, semestreTitle
         <div>
           <p className="font-semibold text-sm">{nomComplet}</p>
           {releve.formation?.titre && <p className="text-neutral-600">{releve.formation.titre}</p>}
+          <p className="text-neutral-500">
+            {[
+              etu?.code_nip ? `NIP ${etu.code_nip}` : null,
+              etu?.code_ine ? `INE ${etu.code_ine}` : null,
+              releve.semestre.inscription ? `Inscription ${releve.semestre.inscription}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
         </div>
         <table className="border-collapse">
           <tbody>
@@ -100,6 +109,20 @@ export default function PrintExport({ releve, overrides, username, semestreTitle
                 <td className="py-0.5">
                   {releve.semestre.ECTS.acquis ?? "-"} / {releve.semestre.ECTS.total ?? "-"}
                 </td>
+              </tr>
+            )}
+            {releve.semestre.absences && (
+              <tr>
+                <td className="font-semibold py-0.5 pr-4">Absences</td>
+                <td className="py-0.5">
+                  {releve.semestre.absences.injustifie ?? 0} injustifiees / {releve.semestre.absences.total ?? 0} total
+                </td>
+              </tr>
+            )}
+            {releve.semestre.situation && (
+              <tr>
+                <td className="font-semibold py-0.5 pr-4">Situation</td>
+                <td className="py-0.5">{releve.semestre.situation}</td>
               </tr>
             )}
           </tbody>

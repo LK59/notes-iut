@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { login } from "../api";
 import ThemeToggle from "./ThemeToggle";
 
-export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: string) => void }) {
+export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: string, isAdmin?: boolean) => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -25,7 +25,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
     setLoading(true);
     try {
       const res = await login(username, password, remember);
-      onLoggedIn(res.username);
+      onLoggedIn(res.username, res.isAdmin);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Échec de la connexion");
     } finally {

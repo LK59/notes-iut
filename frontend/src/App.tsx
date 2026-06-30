@@ -5,6 +5,7 @@ import Dashboard from "./components/Dashboard";
 
 export default function App() {
   const [username, setUsername] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
 
   function checkAuth() {
@@ -12,13 +13,19 @@ export default function App() {
       .then(async (res) => {
         if (res.authenticated) {
           setUsername(res.username ?? null);
+          setIsAdmin(Boolean(res.isAdmin));
           return;
         }
-        // /api/me ne renvoie jamais 401 (par design) : la reconnexion silencieuse n'est donc
-        // pas déclenchée automatiquement ici comme pour les autres appels — on la tente nous-mêmes.
-        setUsername(await autoLoginIfRemembered());
+        // /api/me ne renvoie jamais 401 (par design). Le serveur voit le cookie HttpOnly
+        // "remember" et nous dit si une reconnexion silencieuse vaut la peine d'être tentée.
+        const refreshed = res.canRefresh ? await autoLoginIfRemembered() : null;
+        setUsername(refreshed?.username ?? null);
+        setIsAdmin(Boolean(refreshed?.isAdmin));
       })
-      .catch(() => setUsername(null))
+      .catch(() => {
+        setUsername(null);
+        setIsAdmin(false);
+      })
       .finally(() => setChecking(false));
   }
 
@@ -38,7 +45,10 @@ export default function App() {
   // Session serveur courte (4h) : si une requête API renvoie 401 en cours d'usage,
   // on retombe proprement sur l'écran de connexion plutôt que de laisser une erreur affichée.
   useEffect(() => {
-    setUnauthorizedHandler(() => setUsername(null));
+    setUnauthorizedHandler(() => {
+      setUsername(null);
+      setIsAdmin(false);
+    });
     return () => setUnauthorizedHandler(null);
   }, []);
 
@@ -53,8 +63,8 @@ export default function App() {
   }
 
   if (!username) {
-    return <LoginPage onLoggedIn={setUsername} />;
+    return <LoginPage onLoggedIn={(name, admin) => { setUsername(name); setIsAdmin(Boolean(admin)); }} />;
   }
 
-  return <Dashboard username={username} onLoggedOut={() => setUsername(null)} />;
+  return <Dashboard username={username} isAdmin={isAdmin} onLoggedOut={() => { setUsername(null); setIsAdmin(false); }} />;
 }
