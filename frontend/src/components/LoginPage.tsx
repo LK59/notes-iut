@@ -72,14 +72,19 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
           />
         </div>
         <div>
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+          <label className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
             <input
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              className="rounded border-sky-300 dark:border-slate-600"
+              className="mt-0.5 rounded border-sky-300 dark:border-slate-600"
             />
-            Se souvenir de moi (1 mois)
+            <span>
+              Se souvenir de moi (1 mois)
+              <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
+                — requis pour les notifications push
+              </span>
+            </span>
           </label>
           {remember && (
             <p className="mt-1 text-xs text-sky-700 dark:text-sky-300 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-md p-2">

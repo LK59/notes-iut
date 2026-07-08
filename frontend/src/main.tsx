@@ -1,4 +1,5 @@
 import ReactDOM from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import {
@@ -12,6 +13,17 @@ import { ensureCacheVersion } from "./offlineCache";
 import "./index.css";
 
 ensureCacheVersion();
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 14 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 // Après un redéploi, les anciens chunks JS hashés peuvent disparaître alors qu'un onglet
 // encore ouvert les référence. Dans ce cas, on purge les caches navigateur/service worker
@@ -40,9 +52,11 @@ window.addEventListener("vite:preloadError", (event) => {
 });
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
+  <QueryClientProvider client={queryClient}>
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  </QueryClientProvider>
 );
 
 // Une fois l'app stable quelques secondes, on autorise un futur rechargement automatique

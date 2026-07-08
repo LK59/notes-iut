@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { autoLoginIfRemembered, me, setUnauthorizedHandler } from "./api";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 
 export default function App() {
+  const queryClient = useQueryClient();
   const [username, setUsername] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -46,11 +48,12 @@ export default function App() {
   // on retombe proprement sur l'écran de connexion plutôt que de laisser une erreur affichée.
   useEffect(() => {
     setUnauthorizedHandler(() => {
+      queryClient.clear();
       setUsername(null);
       setIsAdmin(false);
     });
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [queryClient]);
 
   // En cas de connexion instable, ne jamais rester sur un écran vide indéfiniment : même si
   // le check initial traîne, on affiche un signe de vie plutôt qu'un écran blanc/bleu muet.

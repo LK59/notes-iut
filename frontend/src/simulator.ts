@@ -347,6 +347,31 @@ export function evaluationWeightInModule(mod: ModuleEntry, evalIdx: number): num
   return (toNumber(mod.evaluations[evalIdx].coef, 1) / total) * 100;
 }
 
+/**
+ * Moyenne d'une UE compatible semestres en cours ET archivés :
+ * ueAggregate recompute depuis les évaluations brutes (fiable quand ScoDoc ne stocke plus
+ * de moyenne officielle pour le semestre courant) ; fallback sur ue.moyenne pour les
+ * semestres archivés où le détail des modules n'est plus renvoyé.
+ */
+export function ueMoyenneCompat(ue: Ue, releve: Releve): number | null {
+  const agg = ueAggregate(ue, releve, {}).value;
+  if (agg !== null) return agg;
+  const m = ue.moyenne;
+  if (m === null || m === undefined) return null;
+  if (typeof m === "object") return numericNoteValue((m as { value?: number | string | null }).value ?? null);
+  return numericNoteValue(m as number | string);
+}
+
+/** Moyenne générale d'un semestre via ueMoyenneCompat (fonctionne pour les semestres en cours et archivés). */
+export function semesterMoyenne(releve: Releve): number | null {
+  const moys: Record<string, number | null> = {};
+  for (const [code, ue] of Object.entries(releve.ues)) {
+    if (ue.type === 1) continue;
+    moys[code] = ueMoyenneCompat(ue, releve);
+  }
+  return moyenneGenerale(releve.ues, moys);
+}
+
 export function round2(n: number | null | undefined): number | null {
   return n === null || n === undefined ? null : Math.round(n * 100) / 100;
 }

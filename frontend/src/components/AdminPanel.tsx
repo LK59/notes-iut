@@ -90,6 +90,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const config = asRecord(health.config);
   const remember = asRecord(status?.remember);
   const cache = asRecord(status?.cache);
+  const push = asRecord(status?.push);
+  const pushUsers = Array.isArray(push.users) ? push.users.map(asRecord) : [];
   const serverSessions = asRecord(status?.sessions);
 
   return (
@@ -145,6 +147,27 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
               <MetricCard label="Relevés" value={cache.releve_entries} />
               <MetricCard label="Users cache" value={cache.users_with_cache} />
               <MetricCard label="TTL courant" value={fmtDuration(cache.releve_current_ttl_seconds)} />
+            </div>
+          </section>
+
+          <section className="lg:col-span-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Push</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+              <MetricCard label="Abonnements" value={push.active_subscriptions} />
+              <MetricCard label="Utilisateurs" value={push.subscribed_users} />
+              <MetricCard label="Snapshots" value={push.snapshots} />
+              <MetricCard label="Checks suivis" value={pushUsers.length} />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {pushUsers.slice(0, 20).map((user) => (
+                <div key={String(user.username)} className="text-xs text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-800 rounded p-2">
+                  <p className="font-medium">{fmtValue(user.username)}</p>
+                  <p>Dernier succès : {fmtTime(user.last_success_at as number | undefined)}</p>
+                  <p>Prochain essai : {fmtTime(user.next_retry_at as number | undefined)}</p>
+                  <p>Nouvelles notes dernier check : {fmtValue(user.last_new_grades_count)}</p>
+                  {user.last_error && <p className="text-red-600 dark:text-red-400">Erreur : {fmtValue(user.last_error)}</p>}
+                </div>
+              ))}
             </div>
           </section>
 

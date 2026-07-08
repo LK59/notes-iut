@@ -12,8 +12,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Releve, Semestre, Ue } from "../types";
-import { numericNoteValue, round2, ueAggregate } from "../simulator";
+import type { Releve, Semestre } from "../types";
+import { numericNoteValue, round2, ueMoyenneCompat, ueAggregate } from "../simulator";
 import type { SemestrePoint } from "./EvolutionChart";
 import { useDarkMode } from "../theme";
 
@@ -37,16 +37,6 @@ function semLabel(s: Semestre): string {
 }
 
 
-// Pour les semestres archivés dans ScoDoc, ue.ressources/saes est souvent vide →
-// ueAggregate retourne null. On lit alors la moyenne officielle directement sur ue.moyenne.
-function cmpUeMoyenne(ue: Ue, releve: Releve): number | null {
-  const agg = ueAggregate(ue, releve, {}).value;
-  if (agg !== null) return agg;
-  const m = ue.moyenne;
-  if (m === null || m === undefined) return null;
-  if (typeof m === "object") return numericNoteValue((m as { value?: number | string | null }).value ?? null);
-  return numericNoteValue(m as number | string);
-}
 
 export default function GraphiquesView({ releve, overrides, ueMoyennes, evolution, allReleves, semestres, currentSemestreId }: Props) {
   const dark = useDarkMode();
@@ -143,7 +133,7 @@ export default function GraphiquesView({ releve, overrides, ueMoyennes, evolutio
   const semesterCompareData = ueEntries.map(([code], idx) => {
     const curMoy = ueMoyennes[code];
     const [, cmpUe] = compareUeEntries[idx] ?? [];
-    const cmpMoy = cmpUe && compareReleve ? cmpUeMoyenne(cmpUe, compareReleve) : null;
+    const cmpMoy = cmpUe && compareReleve ? ueMoyenneCompat(cmpUe, compareReleve) : null;
     return {
       ue: `UE${idx + 1}`,
       actuel: curMoy !== null && curMoy !== undefined ? round2(curMoy) : null,

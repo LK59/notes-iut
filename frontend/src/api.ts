@@ -1,5 +1,6 @@
 import type { PremiereConnexionResponse, ReleveResponse } from "./types";
 import { cacheGet, cacheSet, clearCache } from "./offlineCache";
+import { PremiereConnexionSchema, ReleveResponseSchema } from "./schemas";
 
 /** Erreur HTTP "normale" (réponse reçue du serveur) — distincte d'une vraie panne réseau. */
 export class HttpError extends Error {
@@ -33,9 +34,13 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
   try {
     resp = await fetch(path, {
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       ...init,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        ...(init?.headers as Record<string, string> | undefined),
+      },
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
@@ -71,32 +76,28 @@ function messageForStatus(status: number): string {
   return `Erreur ${status}`;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+function _invalidPayloadError(detail: string): HttpError {
+  return new HttpError(502, detail, "SCODOC_INVALID_RESPONSE", true);
 }
 
 function validateSemestresPayload(data: unknown): PremiereConnexionResponse {
-  if (!isRecord(data) || !Array.isArray(data.semestres)) {
-    throw new HttpError(
-      502,
-      "Le portail de notes a renvoye une reponse invalide. Reessaie dans quelques minutes.",
-      "SCODOC_INVALID_RESPONSE",
-      true
+  const result = PremiereConnexionSchema.safeParse(data);
+  if (!result.success) {
+    throw _invalidPayloadError(
+      "Le portail de notes a renvoye une reponse invalide. Reessaie dans quelques minutes."
     );
   }
-  return data as PremiereConnexionResponse;
+  return result.data as PremiereConnexionResponse;
 }
 
 function validateRelevePayload(data: unknown): ReleveResponse {
-  if (!isRecord(data) || !isRecord(data.relevé) || !isRecord(data.relevé.ues)) {
-    throw new HttpError(
-      502,
-      "Le portail de notes a renvoye un releve invalide. Reessaie dans quelques minutes.",
-      "SCODOC_INVALID_RESPONSE",
-      true
+  const result = ReleveResponseSchema.safeParse(data);
+  if (!result.success) {
+    throw _invalidPayloadError(
+      "Le portail de notes a renvoye un releve invalide. Reessaie dans quelques minutes."
     );
   }
-  return data as ReleveResponse;
+  return result.data as ReleveResponse;
 }
 
 /**

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import json
 import time
 import hashlib
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import requests
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -24,11 +27,241 @@ from .errors import (
     RememberTokenMissing,
     ScodocSessionRejected,
 )
-from .ratelimit import check_rate_limit
+from .ratelimit import check_rate_limit, MAX_ATTEMPTS_USER
 from .scodoc_payloads import validate_premiere_connexion_payload, validate_releve_payload
 from .sessions import UserSession, create_session, delete_session, get_session, session_stats
 
-app = FastAPI(title="Notes IUT Dashboard")
+
+# ── Push notifications : polling en arrière-plan ──────────────────────────────
+
+PUSH_POLL_INTERVAL = int(os.environ.get("PUSH_POLL_INTERVAL", "600"))  # 10 minutes par défaut
+PUSH_INITIAL_DELAY = int(os.environ.get("PUSH_INITIAL_DELAY", "60"))
+PUSH_MAX_CONCURRENT_CHECKS = int(os.environ.get("PUSH_MAX_CONCURRENT_CHECKS", "2"))
+PUSH_BACKOFF_MAX_SECONDS = int(os.environ.get("PUSH_BACKOFF_MAX_SECONDS", "3600"))
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:notes-iut@example.com")
+_push_poll_lock = asyncio.Lock()
+
+
+
+def _extract_grade_snapshot(releve: dict) -> dict[str, str | None]:
+    result: dict[str, str | None] = {}
+    for group in ("ressources", "saes"):
+        for mod in (releve.get(group) or {}).values():
+            for ev in (mod.get("evaluations") or []):
+                ev_id = str(ev.get("id", ""))
+                if not ev_id:
+                    continue
+                note = ev.get("note") or {}
+                val = note.get("value") if isinstance(note, dict) else None
+                result[ev_id] = str(val) if val is not None else None
+    return result
+
+
+def _find_new_grades(old_snapshot: dict[str, str | None], new_snapshot: dict[str, str | None], releve: dict) -> list[dict]:
+    new_grades = []
+    for group in ("ressources", "saes"):
+        for mod_code, mod in (releve.get(group) or {}).items():
+            mod_titre = mod.get("titre") or mod_code
+            for ev in (mod.get("evaluations") or []):
+                ev_id = str(ev.get("id", ""))
+                if not ev_id:
+                    continue
+                old_val = old_snapshot.get(ev_id)
+                new_val = new_snapshot.get(ev_id)
+                if old_val is None and new_val is not None:
+                    try:
+                        float_val = float(new_val)
+                        if float_val == float_val:  # pas NaN
+                            new_grades.append({
+                                "description": ev.get("description") or "Évaluation",
+                                "module": f"{mod_code} – {mod_titre}",
+                                "value": new_val,
+                            })
+                    except (ValueError, TypeError):
+                        pass
+    return new_grades
+
+
+def _push_message_payload(new_grades: list[dict], include_grade_value: bool) -> dict:
+    count = len(new_grades)
+    if count > 1:
+        return {
+            "title": "Plusieurs nouvelles notes sont disponibles",
+            "body": "Ouvre Notes IUT pour les consulter.",
+            "url": "/",
+            "tag": "notes-iut-grade",
+        }
+    if count == 1:
+        g = new_grades[0]
+        if include_grade_value:
+            return {
+                "title": f"Nouvelle note : {g['description']}",
+                "body": f"{g['module']} — {g['value']}/20",
+                "url": "/",
+                "tag": "notes-iut-grade",
+            }
+        return {
+            "title": "Nouvelle note publiée",
+            "body": f"{g['module']} — {g['description']}",
+            "url": "/",
+            "tag": "notes-iut-grade",
+        }
+    return {"title": "Nouvelle note publiée", "body": "Ouvre Notes IUT pour la consulter.", "url": "/", "tag": "notes-iut-grade"}
+
+
+def _send_push(subs: list[dict], message: dict) -> int:
+    from pywebpush import webpush, WebPushException
+    priv_pem, _ = cache.get_or_create_vapid_keys()
+    sent = 0
+    for sub in subs:
+        try:
+            webpush(
+                subscription_info={"endpoint": sub["endpoint"], "keys": {"p256dh": sub["p256dh"], "auth": sub["auth"]}},
+                data=json.dumps(message),
+                vapid_private_key=priv_pem,
+                vapid_claims={"sub": VAPID_SUBJECT},
+            )
+            sent += 1
+            _log_event("push.sent", endpoint_hash=_safe_hash(sub["endpoint"]), tag=message.get("tag"))
+        except WebPushException as exc:
+            if exc.response is not None and exc.response.status_code in (401, 403, 404, 410):
+                cache.delete_push_subscription_by_endpoint(sub["endpoint"])
+                _log_event(
+                    "push.subscription.deleted",
+                    endpoint_hash=_safe_hash(sub["endpoint"]),
+                    status_code=exc.response.status_code,
+                )
+            else:
+                _log_event("push.failed", endpoint_hash=_safe_hash(sub["endpoint"]), error=str(exc))
+    return sent
+
+
+def _push_backoff_delay(username: str) -> int:
+    state = cache.get_push_poll_state(username)
+    failures = int(state.get("failure_count") or 0)
+    return min(PUSH_BACKOFF_MAX_SECONDS, PUSH_POLL_INTERVAL * (2 ** min(failures, 6)))
+
+
+def _push_poll_user(username: str) -> None:
+    state = cache.get_push_poll_state(username)
+    next_retry_at = state.get("next_retry_at")
+    if next_retry_at and time.time() < float(next_retry_at):
+        _log_event("push.poll.skipped_backoff", username_hash=_safe_hash(username), next_retry_at=next_retry_at)
+        return
+
+    started = time.perf_counter()
+    cache.mark_push_poll_started(username)
+    creds = cache.get_credentials_for_background(username)
+    if not creds:
+        cache.mark_push_poll_error(username, "missing_background_credentials", _push_backoff_delay(username))
+        _log_event("push.poll.no_credentials", username_hash=_safe_hash(username))
+        return
+    _username, password = creds
+    semestre_id: str | None = None
+    try:
+        scodoc = cas_login(_username, password)
+        bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
+        semestres = bootstrap.get("semestres", [])
+        if not semestres:
+            cache.mark_push_poll_success(_username, None, 0, False)
+            _log_event("push.poll.no_semestres", username_hash=_safe_hash(_username))
+            return
+        current_semestre = semestres[-1]
+        semestre_id = str(current_semestre.get("formsemestre_id", ""))
+        if not semestre_id:
+            cache.mark_push_poll_success(_username, None, 0, False)
+            _log_event("push.poll.no_current_semestre", username_hash=_safe_hash(_username))
+            return
+        releve_data = validate_releve_payload(scodoc.releve_etudiant(semestre_id))
+        releve = releve_data["relevé"]
+        current_snapshot = _extract_grade_snapshot(releve)
+        stored_snapshot = cache.get_grade_snapshot(_username, semestre_id)
+        if stored_snapshot is None:
+            cache.set_grade_snapshot(_username, semestre_id, current_snapshot)
+            cache.mark_push_poll_success(_username, semestre_id, 0, False)
+            _log_event(
+                "push.poll.snapshot_initialized",
+                username_hash=_safe_hash(_username),
+                semestre_id=semestre_id,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
+            return
+        new_grades = _find_new_grades(stored_snapshot, current_snapshot, releve)
+        sent = 0
+        if new_grades:
+            subs = cache.get_push_subscriptions(_username)
+            _log_event("push.poll.new_grades", username_hash=_safe_hash(_username), count=len(new_grades), subscriptions=len(subs))
+            for sub in subs:
+                sent += _send_push([sub], _push_message_payload(new_grades, sub.get("include_grade_value", False)))
+        else:
+            _log_event("push.poll.no_new_grade", username_hash=_safe_hash(_username), semestre_id=semestre_id)
+        cache.set_grade_snapshot(_username, semestre_id, current_snapshot)
+        cache.mark_push_poll_success(_username, semestre_id, len(new_grades), sent > 0)
+        _log_event(
+            "push.poll.ok",
+            username_hash=_safe_hash(_username),
+            semestre_id=semestre_id,
+            new_grades=len(new_grades),
+            notifications_sent=sent,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+    except Exception:
+        delay = _push_backoff_delay(_username)
+        cache.mark_push_poll_error(_username, "scodoc_or_poll_error", delay)
+        logger.exception(
+            json.dumps(
+                {
+                    "event": "push.poll.error",
+                    "username_hash": _safe_hash(_username),
+                    "semestre_id": semestre_id,
+                    "retry_delay_seconds": delay,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+
+
+async def _push_polling_loop() -> None:
+    await asyncio.sleep(PUSH_INITIAL_DELAY)  # délai initial au démarrage
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            if _push_poll_lock.locked():
+                _log_event("push.poll.cycle_skipped_overlap")
+            else:
+                async with _push_poll_lock:
+                    usernames = cache.list_subscribed_usernames()
+                    _log_event("push.poll.cycle_started", subscribed_users=len(usernames))
+                    semaphore = asyncio.Semaphore(max(1, PUSH_MAX_CONCURRENT_CHECKS))
+
+                    async def run_user(username: str) -> None:
+                        async with semaphore:
+                            try:
+                                await loop.run_in_executor(None, _push_poll_user, username)
+                            except Exception:
+                                logger.exception("Erreur polling push pour un utilisateur")
+
+                    await asyncio.gather(*(run_user(username) for username in usernames))
+                    _log_event("push.poll.cycle_finished", subscribed_users=len(usernames))
+        except Exception:
+            logger.exception("Erreur dans la boucle de polling push")
+        await asyncio.sleep(PUSH_POLL_INTERVAL)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_push_polling_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Notes IUT Dashboard", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 logger = logging.getLogger("notes_iut.api")
 
 COOKIE_SID = "sid"
@@ -43,6 +276,17 @@ class LoginPayload(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=256)
     remember: bool = False
+
+
+class PushSubscribePayload(BaseModel):
+    endpoint: str = Field(min_length=1, max_length=2048)
+    p256dh: str = Field(min_length=1, max_length=512)
+    auth: str = Field(min_length=1, max_length=256)
+    includeGradeValue: bool = False
+
+
+class PushPreferencesPayload(BaseModel):
+    includeGradeValue: bool = False
 
 
 def _admin_usernames() -> set[str]:
@@ -89,12 +333,36 @@ async def http_error_handler(request: Request, exc: HTTPException):
 
 
 @app.middleware("http")
+async def csrf_check(request: Request, call_next):
+    """Exige X-Requested-With: XMLHttpRequest sur toutes les requêtes mutantes /api/.
+    Bloque les soumissions de formulaires cross-origin (CSRF) sans nécessiter de token dédié :
+    les navigateurs ne permettent pas d'ajouter ce header sur une requête cross-origin sans
+    préflight CORS, et l'API n'a pas de CORS cross-origin configuré."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Requête non autorisée.", "error": {"code": "CSRF_REJECTED", "message": "Requête non autorisée.", "retryable": False}},
+            )
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    # style-src 'unsafe-inline' requis pour recharts (inline styles sur les éléments SVG).
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        "connect-src 'self'"
+    )
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "private, no-store"
     return response
@@ -139,6 +407,11 @@ def _set_remember_cookie(response: Response, token: str) -> None:
 
 
 def _client_ip(request: Request) -> str | None:
+    # Derrière Docker/Nginx, request.client.host est l'IP du proxy. On lit X-Forwarded-For
+    # (positionné par le reverse-proxy) pour obtenir l'IP réelle du client.
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
 
 
@@ -163,8 +436,7 @@ def api_health():
     return {"status": "ok", "version": APP_VERSION, "build": APP_BUILD_ID}
 
 
-@app.get("/api/health/deep")
-def api_health_deep():
+def _health_deep_data() -> dict:
     checks: dict[str, str] = {"api": "ok"}
     config: dict[str, str] = {}
     remember_stats: dict | None = None
@@ -197,14 +469,25 @@ def api_health_deep():
     }
 
 
+@app.get("/api/health/deep")
+def api_health_deep(request: Request):
+    _require_admin(request)
+    return _health_deep_data()
+
+
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/login")
 def api_login(payload: LoginPayload, request: Request, response: Response):
     started = time.perf_counter()
-    client_ip = request.client.host if request.client else "unknown"
-    if not check_rate_limit(f"login:{client_ip}"):
-        _log_event("auth.login.rate_limited", username_hash=_safe_hash(payload.username), ip_hash=_safe_hash(client_ip))
+    client_ip = _client_ip(request) or "unknown"
+    username_hash = _safe_hash(payload.username)
+    # Double verrou : par IP (attaque distribuée sur plusieurs comptes) et par username
+    # (attaque distribuée depuis plusieurs IPs sur un seul compte).
+    ip_ok = check_rate_limit(f"login:{client_ip}")
+    user_ok = check_rate_limit(f"login:user:{username_hash}", MAX_ATTEMPTS_USER)
+    if not ip_ok or not user_ok:
+        _log_event("auth.login.rate_limited", username_hash=username_hash, ip_hash=_safe_hash(client_ip))
         raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes.")
     scodoc = cas_login(payload.username, payload.password)
     bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
@@ -253,7 +536,6 @@ def api_refresh(request: Request, response: Response):
     username, password = creds
     scodoc = cas_login(username, password)
     bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
-    cache.delete_user_cache(username)
     cache.set_semestres(username, bootstrap)
 
     cache.delete_remember_token(token, _user_agent(request), _client_ip(request))
@@ -331,10 +613,11 @@ def api_admin_status(request: Request):
         "version": APP_VERSION,
         "build": APP_BUILD_ID,
         "admin_usernames": sorted(_admin_usernames()),
-        "health": api_health_deep(),
+        "health": _health_deep_data(),
         "sessions": session_stats(),
         "cache": cache.cache_stats(),
         "remember": cache.remember_token_stats(),
+        "push": cache.push_poll_stats(),
     }
 
 
@@ -386,7 +669,7 @@ def api_semestres(request: Request, background_tasks: BackgroundTasks):
         if isinstance(exc, AppError):
             raise
         logger.exception("Échec de l'appel dataPremièreConnexion")
-        raise HTTPException(status_code=502, detail=f"Erreur lors de l'appel au portail : {exc}") from exc
+        raise HTTPException(status_code=502, detail="Le portail de notes ne répond pas. Réessaie dans quelques minutes.") from exc
 
     cache.set_semestres(session.username, data)
     background_tasks.add_task(_prefetch_releves, session, data.get("semestres", []))
@@ -411,7 +694,8 @@ def api_releve(semestre_id: str, request: Request, refresh: bool = False):
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, AppError):
             raise
-        raise HTTPException(status_code=502, detail=f"Erreur lors de l'appel au portail : {exc}") from exc
+        logger.exception("Échec de l'appel au portail (releve %s)", semestre_id)
+        raise HTTPException(status_code=502, detail="Le portail de notes ne répond pas. Réessaie dans quelques minutes.") from exc
 
     cache.set_releve(session.username, semestre_id, data)
     return data
@@ -423,7 +707,8 @@ def api_distribution(eval_id: str, request: Request):
     try:
         data = session.scodoc.liste_notes(eval_id)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Erreur lors de l'appel au portail : {exc}") from exc
+        logger.exception("Échec de l'appel au portail (distribution %s)", eval_id)
+        raise HTTPException(status_code=502, detail="Le portail de notes ne répond pas. Réessaie dans quelques minutes.") from exc
     return data
 
 
@@ -433,7 +718,8 @@ def api_bulletin_pdf(semestre_id: str, request: Request, type: str = "BUT"):
     try:
         pdf_bytes = session.scodoc.bulletin_pdf(semestre_id, type)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Erreur lors de l'appel au portail : {exc}") from exc
+        logger.exception("Échec de l'appel au portail (bulletin-pdf %s)", semestre_id)
+        raise HTTPException(status_code=502, detail="Le portail de notes ne répond pas. Réessaie dans quelques minutes.") from exc
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -447,8 +733,68 @@ def api_photo(request: Request):
     try:
         content, content_type = session.scodoc.student_photo()
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"Erreur lors de l'appel au portail : {exc}") from exc
+        logger.exception("Échec de l'appel au portail (photo)")
+        raise HTTPException(status_code=502, detail="Le portail de notes ne répond pas. Réessaie dans quelques minutes.") from exc
     return Response(content=content, media_type=content_type)
+
+
+# ── Push notifications ────────────────────────────────────────────────────────
+
+@app.get("/api/push/vapid-key")
+def api_push_vapid_key():
+    _, pub = cache.get_or_create_vapid_keys()
+    return {"vapid_public_key": pub}
+
+
+@app.post("/api/push/subscribe")
+def api_push_subscribe(payload: PushSubscribePayload, request: Request):
+    session = _require_session(request)
+    _, vapid_public_key = cache.get_or_create_vapid_keys()
+    cache.upsert_push_subscription(session.username, payload.endpoint, payload.p256dh, payload.auth, vapid_public_key, payload.includeGradeValue)
+    return {"ok": True}
+
+
+@app.get("/api/push/preferences")
+def api_push_preferences(request: Request):
+    session = _require_session(request)
+    preferences = cache.get_push_preferences(session.username)
+    return {"includeGradeValue": preferences["include_grade_value"]}
+
+
+@app.put("/api/push/preferences")
+def api_update_push_preferences(payload: PushPreferencesPayload, request: Request):
+    session = _require_session(request)
+    cache.set_push_include_grade_value(session.username, payload.includeGradeValue)
+    return {"ok": True, "includeGradeValue": payload.includeGradeValue}
+
+
+@app.delete("/api/push/subscribe")
+def api_push_unsubscribe(request: Request):
+    session = _require_session(request)
+    cache.delete_push_subscriptions(session.username)
+    return {"ok": True}
+
+
+@app.post("/api/push/test")
+def api_push_test(request: Request):
+    session = _require_session(request)
+    subs = cache.get_push_subscriptions(session.username)
+    if not subs:
+        raise HTTPException(status_code=404, detail="Aucun abonnement push actif.")
+    test_msg = {
+        "title": "Test de notification",
+        "body": "Les notifications Notes IUT fonctionnent !",
+        "url": "/",
+        "tag": "notes-iut-test",
+    }
+    try:
+        sent = _send_push(subs, test_msg)
+    except Exception as exc:
+        logger.exception("Échec du push de test")
+        raise HTTPException(status_code=502, detail="Envoi de la notification échoué.") from exc
+    if sent == 0:
+        raise HTTPException(status_code=410, detail="Abonnement push expiré. Désactive puis réactive les notifications.")
+    return {"ok": True}
 
 
 # ── SPA fallback ──────────────────────────────────────────────────────────────

@@ -6,35 +6,17 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt" : le SW attend l'accord de l'utilisateur pour s'activer (bouton dans SettingsMenu).
+      registerType: "prompt",
       cleanupOutdatedCaches: true,
-      // Le manifest est géré manuellement dans public/manifest.json
       manifest: false,
-      // Activation immédiate sans attendre la fermeture des autres onglets
       selfDestroying: false,
-      workbox: {
-        skipWaiting: true,
-        clientsClaim: true,
-        // Pre-cache tous les assets JS/CSS/HTML générés par le build (hashés = jamais périmés)
+      // injectManifest : SW personnalisé avec handler push.
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,woff,woff2}"],
-        navigateFallback: "index.html",
-        navigateFallbackDenylist: [/^\/api\//],
-        runtimeCaching: [
-          {
-            // Photo de profil : stale-while-revalidate, 1h de fraîcheur
-            urlPattern: /^\/api\/photo/,
-            handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "api-photo",
-              expiration: { maxAgeSeconds: 3600, maxEntries: 5 },
-            },
-          },
-          {
-            // Toutes les autres routes /api/* : réseau uniquement, jamais de cache
-            urlPattern: /^\/api\//,
-            handler: "NetworkOnly",
-          },
-        ],
       },
     }),
   ],

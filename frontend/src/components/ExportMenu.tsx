@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface Props {
   semestreId: string;
@@ -7,21 +8,78 @@ interface Props {
 
 export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
 
   useEffect(() => {
     if (!open) return;
     const onClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const popup = document.querySelector("[data-export-popup]");
+      if (buttonRef.current?.contains(e.target as Node) || popup?.contains(e.target as Node)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, [open]);
 
-  return (
-    <div ref={ref} className="relative">
+  function toggleMenu() {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const margin = 8;
+      const width = Math.min(320, window.innerWidth - margin * 2);
+      const top = Math.min(rect.bottom + margin, window.innerHeight - margin);
+      const left =
+        window.innerWidth < 640
+          ? (window.innerWidth - width) / 2
+          : Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin);
+      setPopupStyle({
+        position: "fixed",
+        top,
+        left,
+        width,
+        maxHeight: `calc(100vh - ${top + margin}px)`,
+        overflowY: "auto",
+      });
+    }
+    setOpen((o) => !o);
+  }
+
+  const popup = open ? (
+    <div
+      data-export-popup
+      style={popupStyle}
+      className="rounded-lg border border-sky-200/70 dark:border-slate-700/70 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl ring-1 ring-black/5 dark:ring-white/10 shadow-lg overflow-hidden z-[9999]"
+    >
+      <a
+        href={`/api/bulletin-pdf/${semestreId}?type=BUT`}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => setOpen(false)}
+        className="block px-3 py-2.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700 border-b border-sky-100 dark:border-slate-700"
+      >
+        <span className="font-medium">Bulletin officiel</span>
+        <span className="block text-xs text-slate-500 dark:text-slate-400">Document PDF généré par ScoDoc</span>
+      </a>
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen(false);
+          onExportSimulation();
+        }}
+        className="block w-full text-left px-3 py-2.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700"
+      >
+        <span className="font-medium">Export avec simulation</span>
+        <span className="block text-xs text-slate-500 dark:text-slate-400">
+          Mise en page propre incluant tes notes simulées
+        </span>
+      </button>
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        onClick={toggleMenu}
         className="rounded-md border border-sky-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700 whitespace-nowrap flex items-center gap-1.5"
       >
         Export
@@ -33,32 +91,7 @@ export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
           />
         </svg>
       </button>
-      {open && (
-        <div className="absolute top-full right-0 mt-2 w-64 rounded-lg border border-sky-200/70 dark:border-slate-700/70 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xl ring-1 ring-black/5 dark:ring-white/10 shadow-lg overflow-hidden z-20">
-          <a
-            href={`/api/bulletin-pdf/${semestreId}?type=BUT`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => setOpen(false)}
-            className="block px-3 py-2.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700 border-b border-sky-100 dark:border-slate-700"
-          >
-            <span className="font-medium">Bulletin officiel</span>
-            <span className="block text-xs text-slate-500 dark:text-slate-400">Document PDF généré par ScoDoc</span>
-          </a>
-          <button
-            onClick={() => {
-              setOpen(false);
-              onExportSimulation();
-            }}
-            className="block w-full text-left px-3 py-2.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700"
-          >
-            <span className="font-medium">Export avec simulation</span>
-            <span className="block text-xs text-slate-500 dark:text-slate-400">
-              Mise en page propre incluant tes notes simulées
-            </span>
-          </button>
-        </div>
-      )}
-    </div>
+      {createPortal(popup, document.body)}
+    </>
   );
 }

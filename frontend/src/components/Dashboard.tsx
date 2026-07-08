@@ -1,8 +1,9 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { clearServerCache, getReleve, getSemestres, logout } from "../api";
 import { cacheGet, cacheSet, clearDataCache } from "../offlineCache";
-import type { AbsencesByDate, PremiereConnexionResponse, Releve, ReleveResponse, Semestre } from "../types";
-import { moyenneGenerale, newlyPublishedIds, numericNoteValue, pendingItems, ueAggregate, ueMoyenne } from "../simulator";
+import type { AbsencesByDate, Releve, ReleveResponse, Semestre } from "../types";
+import { moyenneGenerale, newlyPublishedIds, numericNoteValue, pendingItems, semesterMoyenne, ueMoyenne } from "../simulator";
 import type { SemestrePoint } from "./EvolutionChart";
 import UeTable from "./UeTable";
 import SemestreSummary from "./SemestreSummary";
@@ -11,7 +12,7 @@ import ObjectiveCalculator from "./ObjectiveCalculator";
 import AbsencesPanel from "./AbsencesPanel";
 import BonusMalusPanel from "./BonusMalusPanel";
 import SectionNav from "./SectionNav";
-import ThemeToggle from "./ThemeToggle";
+import SettingsMenu from "./SettingsMenu";
 import ScrollToTop from "./ScrollToTop";
 import PrintExport from "./PrintExport";
 import ExportMenu from "./ExportMenu";
@@ -23,13 +24,25 @@ import { useOnline } from "../useOnline";
 import { getGradeHistory, recordGradeHistory, type GradeHistoryItem } from "../gradeHistory";
 import GradeHistoryPanel from "./GradeHistoryPanel";
 import { APP_VERSION, BUILD_ID } from "../version";
-import SessionsPanel from "./SessionsPanel";
-import AdminPanel from "./AdminPanel";
-
-// Recharts pèse lourd dans le bundle : on ne le charge que si la vue Graphique est ouverte.
+// Ces composants ne s'ouvrent que sur clic — on les charge à la demande.
 const GraphiquesView = lazy(() => import("./GraphiquesView"));
+const SessionsPanel = lazy(() => import("./SessionsPanel"));
+const AdminPanel = lazy(() => import("./AdminPanel"));
 
 const SIM_PREFIX = "notes-iut-sim:";
+
+interface ReleveResult {
+  releve: Releve;
+  absences: AbsencesByDate | undefined;
+  previous: Releve | null;
+}
+
+async function fetchReleve(semestreId: string, refresh = false): Promise<ReleveResult> {
+  // Capture la valeur précédente AVANT que withOfflineFallback l'écrase dans le cache localStorage.
+  const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`)?.relevé ?? null;
+  const data = await getReleve(semestreId, refresh);
+  return { releve: data.relevé, absences: data.absences, previous };
+}
 
 function semestreLabel(s: Semestre): string {
   const num = s.semestre_id ? `S${s.semestre_id}` : "";
@@ -54,24 +67,14 @@ function saveSimulation(semestreId: string, overrides: Record<string, number>) {
   }
 }
 
-function officialSemesterAverage(releve: Releve): number | null {
-  return numericNoteValue(releve.semestre?.notes?.value);
-}
 
 export default function Dashboard({ username, isAdmin, onLoggedOut }: { username: string; isAdmin?: boolean; onLoggedOut: () => void }) {
-  const [bootstrap, setBootstrap] = useState<PremiereConnexionResponse | null>(null);
+  const queryClient = useQueryClient();
   const [semestreId, setSemestreId] = useState<string | null>(null);
-  const [releve, setReleve] = useState<Releve | null>(null);
-  const [absences, setAbsences] = useState<AbsencesByDate | undefined>(undefined);
-  const [newIds, setNewIds] = useState<Set<number>>(new Set());
-  const [evolution, setEvolution] = useState<SemestrePoint[]>([]);
-  const [allReleves, setAllReleves] = useState<Record<string, Releve>>({});
   const [gradeHistory, setGradeHistory] = useState<GradeHistoryItem[]>([]);
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [resetting, setResetting] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -80,134 +83,120 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
   const [adminOpen, setAdminOpen] = useState(false);
   const online = useOnline();
   const { view, setView } = useViewMode();
-  // Tracks which semestreId already has its relevé loaded from the bootstrap response,
-  // so the semestreId effect can skip the redundant getReleve() network call.
-  const bootstrapReleveId = useRef<string | null>(null);
 
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+  const { data: bootstrap, isLoading, error: bootstrapError } = useQuery({
+    queryKey: ["semestres"],
+    queryFn: getSemestres,
+  });
+
+  // Initialise semestreId et pré-alimente le cache React Query avec le relevé inclus dans
+  // la réponse bootstrap pour éviter un second appel réseau sur le semestre courant.
   useEffect(() => {
-    getSemestres()
-      .then((data) => {
-        setBootstrap(data);
-        const initial = data.semestres[data.semestres.length - 1]?.formsemestre_id ?? null;
-        setSemestreId(initial);
-        // premiere_connexion already returns the last semester's relevé — use it directly
-        // to skip a redundant getReleve() call and avoid the "Chargement du relevé…" phase.
-        if (data.relevé && initial) {
-          const prev = cacheGet<ReleveResponse>(`releve:${initial}`);
-          setReleve(data.relevé);
-          setAbsences(data.absences);
-          setNewIds(newlyPublishedIds(prev?.relevé ?? null, data.relevé));
-          setGradeHistory(recordGradeHistory(initial, prev?.relevé ?? null, data.relevé));
-          setAllReleves({ [initial]: data.relevé });
-          cacheSet(`releve:${initial}`, { relevé: data.relevé, absences: data.absences });
-          bootstrapReleveId.current = initial;
-        }
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
+    if (!bootstrap) return;
+    if (!semestreId) {
+      setSemestreId(bootstrap.semestres[bootstrap.semestres.length - 1]?.formsemestre_id ?? null);
+    }
+    if (bootstrap.relevé && bootstrap.semestres.length > 0) {
+      const sid = bootstrap.semestres[bootstrap.semestres.length - 1].formsemestre_id;
+      if (!queryClient.getQueryData(["releve", sid])) {
+        const previous = cacheGet<ReleveResponse>(`releve:${sid}`)?.relevé ?? null;
+        queryClient.setQueryData<ReleveResult>(["releve", sid], {
+          releve: bootstrap.relevé,
+          absences: bootstrap.absences,
+          previous,
+        });
+        cacheSet(`releve:${sid}`, { relevé: bootstrap.relevé, absences: bootstrap.absences });
+      }
+    }
+  }, [bootstrap]);
 
+  // ── Relevé du semestre courant ─────────────────────────────────────────────
+  const { data: currentResult } = useQuery({
+    queryKey: ["releve", semestreId],
+    queryFn: () => fetchReleve(semestreId!),
+    enabled: !!semestreId,
+  });
+
+  const releve = currentResult?.releve ?? null;
+  const absences = currentResult?.absences;
+
+  // ── Semestre précédent (tendance uniquement) ──────────────────────────────
+  const prevSemestreId = useMemo(() => {
+    if (!bootstrap || !semestreId) return null;
+    const idx = bootstrap.semestres.findIndex((s) => s.formsemestre_id === semestreId);
+    return idx > 0 ? bootstrap.semestres[idx - 1].formsemestre_id : null;
+  }, [bootstrap, semestreId]);
+
+  const { data: prevResult } = useQuery({
+    queryKey: ["releve", prevSemestreId],
+    queryFn: () => fetchReleve(prevSemestreId!),
+    enabled: !!prevSemestreId,
+  });
+
+  // ── Relevés de tous les semestres (vue Graphiques seulement) ──────────────
+  // useQueries partage le même cache que useQuery ci-dessus : React Query déduplique
+  // automatiquement les fetches concurrents sur le même semestre.
+  const evolutionQueries = useQueries({
+    queries: (bootstrap?.semestres ?? []).map((s) => ({
+      queryKey: ["releve", s.formsemestre_id],
+      queryFn: () => fetchReleve(s.formsemestre_id),
+      enabled: view === "graphiques",
+    })),
+  });
+
+  const allReleves = useMemo(() => {
+    const result: Record<string, Releve> = {};
+    evolutionQueries.forEach((q, idx) => {
+      const s = bootstrap?.semestres[idx];
+      if (q.data && s) result[s.formsemestre_id] = q.data.releve;
+    });
+    return result;
+  }, [evolutionQueries, bootstrap]);
+
+  const evolution = useMemo<SemestrePoint[]>(() => {
+    return (bootstrap?.semestres ?? []).map((s, idx) => ({
+      titre: semestreLabel(s),
+      moyenne: evolutionQueries[idx]?.data?.releve
+        ? numericNoteValue(evolutionQueries[idx].data!.releve.semestre.notes?.value)
+        : null,
+    }));
+  }, [evolutionQueries, bootstrap]);
+
+  // ── Simulation ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!semestreId) return;
     setOverrides(loadSimulation(semestreId));
     setSelectedKey(null);
-    const knownReleve = allReleves[semestreId];
-    if (knownReleve) {
-      setReleve(knownReleve);
-    }
-    // Skip if the relevé was already populated from the bootstrap response above.
-    if (semestreId === bootstrapReleveId.current) {
-      bootstrapReleveId.current = null;
-      return;
-    }
-    let cancelled = false;
-    // On lit le cache local AVANT le fetch (qui l'écrasera) pour détecter les notes
-    // apparues depuis la dernière visite sur ce semestre.
-    const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`);
+    setConfirmingReset(false);
     setGradeHistory(getGradeHistory(semestreId));
-    getReleve(semestreId)
-      .then((data) => {
-        if (cancelled) return;
-        setReleve(data.relevé);
-        setAbsences(data.absences);
-        setNewIds(newlyPublishedIds(previous?.relevé ?? null, data.relevé));
-        setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
-        setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
   }, [semestreId]);
 
-  // Persiste la simulation en cours (localStorage) sans jamais bloquer le rendu : c'est de
-  // l'état purement local à l'utilisateur, distinct des données réseau (network-first).
   useEffect(() => {
     if (!semestreId) return;
     saveSimulation(semestreId, overrides);
   }, [semestreId, overrides]);
 
-  // Charge la moyenne officielle de chaque semestre pour la courbe d'évolution
-  useEffect(() => {
-    if (!bootstrap) return;
-    let cancelled = false;
-    Promise.all(
-      bootstrap.semestres.map(async (s) => {
-        try {
-          const data = await getReleve(s.formsemestre_id);
-          if (!cancelled) setAllReleves((prev) => ({ ...prev, [s.formsemestre_id]: data.relevé }));
-          return { titre: semestreLabel(s), moyenne: officialSemesterAverage(data.relevé) };
-        } catch {
-          return { titre: semestreLabel(s), moyenne: null };
-        }
-      })
-    ).then((points) => {
-      if (!cancelled) setEvolution(points);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [bootstrap]);
+  // ── Nouvelles notes et historique ─────────────────────────────────────────
+  const newIds = useMemo(() => {
+    if (!releve || !currentResult?.previous) return new Set<number>();
+    return newlyPublishedIds(currentResult.previous, releve);
+  }, [releve, currentResult?.previous]);
 
-  // Tendance vs semestre précédent.
-  // Utilise allReleves[semestreId] (pas `releve`) pour éviter le décalage transitoire
-  // où semestreId vient de changer mais releve contient encore le semestre précédent.
-  // ueAggregate recompute depuis les évaluations brutes (fiable pour semestres en cours) ;
-  // fallback sur ue.moyenne pour les semestres archivés où ScoDoc ne renvoie plus le détail.
+  useEffect(() => {
+    if (!releve || !semestreId) return;
+    const history = recordGradeHistory(semestreId, currentResult?.previous ?? null, releve);
+    setGradeHistory(history);
+  }, [releve, semestreId]);
+
+  // ── Tendance vs semestre précédent ─────────────────────────────────────────
   const trend = useMemo(() => {
-    if (!bootstrap || !semestreId) return null;
-    const idx = bootstrap.semestres.findIndex((s) => s.formsemestre_id === semestreId);
-    if (idx <= 0) return null;
-    const currentPoint = evolution[idx];
-    const previousPoint = evolution[idx - 1];
-    if (currentPoint?.moyenne !== null && currentPoint?.moyenne !== undefined && previousPoint?.moyenne !== null && previousPoint?.moyenne !== undefined) {
-      return currentPoint.moyenne - previousPoint.moyenne;
-    }
-    const prevId = bootstrap.semestres[idx - 1].formsemestre_id;
-    const curReleve = allReleves[semestreId] ?? releve;
-    const prevReleve = allReleves[prevId];
-    if (!curReleve || !prevReleve) return null;
-    function semMoy(r: Releve): number | null {
-      const moys: Record<string, number | null> = {};
-      for (const [code, ue] of Object.entries(r.ues)) {
-        if (ue.type === 1) continue;
-        const agg = ueAggregate(ue, r, {}).value;
-        if (agg !== null) { moys[code] = agg; continue; }
-        // Semestre archivé : la note est stockée directement sur l'UE
-        const m = ue.moyenne;
-        moys[code] = typeof m === "object" && m !== null
-          ? numericNoteValue((m as { value?: unknown }).value as never)
-          : numericNoteValue(m as never);
-      }
-      return moyenneGenerale(r.ues, moys);
-    }
-    const cur = semMoy(curReleve);
-    const prev = semMoy(prevReleve);
+    if (!releve || !prevResult?.releve) return null;
+    const cur = semesterMoyenne(releve);
+    const prev = semesterMoyenne(prevResult.releve);
     if (cur === null || prev === null) return null;
     return cur - prev;
-  }, [bootstrap, semestreId, evolution, allReleves, releve]);
+  }, [releve, prevResult]);
 
   // Export PDF : on force tout en ouvert et en thème clair pour le rendu imprimé (les classes
   // dark: de Tailwind dépendent de la classe .dark sur <html>, pas du media query print), puis
@@ -296,13 +285,8 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
     setRefreshing(true);
     setRefreshError(null);
     try {
-      const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`);
-      const data = await getReleve(semestreId, true);
-      setReleve(data.relevé);
-      setAbsences(data.absences);
-      setNewIds(newlyPublishedIds(previous?.relevé ?? null, data.relevé));
-      setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
-      setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
+      const result = await fetchReleve(semestreId, true);
+      queryClient.setQueryData<ReleveResult>(["releve", semestreId], result);
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
     } finally {
@@ -322,11 +306,8 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
     setResetting(true);
     setRefreshError(null);
     try {
-      const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`);
-      const data = await getReleve(semestreId, true);
-      setReleve(data.relevé);
-      setGradeHistory(recordGradeHistory(semestreId, previous?.relevé ?? null, data.relevé));
-      setAllReleves((prev) => ({ ...prev, [semestreId]: data.relevé }));
+      const result = await fetchReleve(semestreId, true);
+      queryClient.setQueryData<ReleveResult>(["releve", semestreId], result);
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
     } finally {
@@ -334,8 +315,8 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
     }
   }
 
-  if (loading) return <Centered>Chargement de tes relevés…</Centered>;
-  if (error) return <DashboardError message={error} onLoggedOut={onLoggedOut} />;
+  if (isLoading) return <Centered>Chargement de tes relevés…</Centered>;
+  if (bootstrapError) return <DashboardError message={(bootstrapError as Error).message} onLoggedOut={onLoggedOut} />;
   if (!bootstrap || !releve) return <Centered>Chargement du relevé…</Centered>;
 
   const ueEntries = Object.entries(releve.ues).filter(([, ue]) => ue.type !== 1);
@@ -422,7 +403,7 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
           </select>
           <ViewToggle view={view} onChange={setView} />
           {semestreId && <ExportMenu semestreId={semestreId} onExportSimulation={() => setPrintMode(true)} />}
-          <ThemeToggle />
+          <SettingsMenu />
           <button
             onClick={() => setSessionsOpen(true)}
             className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
@@ -438,7 +419,7 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
             </button>
           )}
           <button
-            onClick={() => logout().catch(() => {}).finally(onLoggedOut)}
+            onClick={() => logout().catch(() => {}).finally(() => { queryClient.clear(); onLoggedOut(); })}
             className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
           >
             Déconnexion
@@ -590,8 +571,10 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
       </footer>
 
       <ScrollToTop />
-      {sessionsOpen && <SessionsPanel onClose={() => setSessionsOpen(false)} />}
-      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+      <Suspense fallback={null}>
+        {sessionsOpen && <SessionsPanel onClose={() => setSessionsOpen(false)} />}
+        {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+      </Suspense>
     </div>
   );
 }
@@ -605,11 +588,14 @@ function Centered({ children, className = "" }: { children: React.ReactNode; cla
 }
 
 function DashboardError({ message, onLoggedOut }: { message: string; onLoggedOut?: () => void }) {
+  const queryClient = useQueryClient();
   function handleClearAndReload() {
+    queryClient.clear();
     clearDataCache();
     clearServerCache().catch(() => {}).finally(() => window.location.reload());
   }
   function handleLogout() {
+    queryClient.clear();
     logout().catch(() => {}).finally(() => onLoggedOut?.());
   }
   return (
