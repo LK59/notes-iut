@@ -1,24 +1,4 @@
-"""Limiteur de débit en mémoire, simple fenêtre glissante — pour freiner le brute-force sur
-/api/login sans gêner un usage normal (quelques essais de connexion par étudiant)."""
-from __future__ import annotations
+"""Re-exporte check_rate_limit depuis cache.py (implémentation persistée en SQLite)."""
+from .cache import check_rate_limit, MAX_ATTEMPTS_IP, MAX_ATTEMPTS_USER, WINDOW_SECONDS
 
-import time
-from collections import defaultdict, deque
-
-WINDOW_SECONDS = 300
-MAX_ATTEMPTS_IP = 10
-MAX_ATTEMPTS_USER = 20
-
-_attempts: dict[str, deque[float]] = defaultdict(deque)
-
-
-def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS_IP) -> bool:
-    """Renvoie False si la clé a dépassé max_attempts tentatives sur la fenêtre glissante."""
-    now = time.time()
-    bucket = _attempts[key]
-    while bucket and now - bucket[0] > WINDOW_SECONDS:
-        bucket.popleft()
-    if len(bucket) >= max_attempts:
-        return False
-    bucket.append(now)
-    return True
+__all__ = ["check_rate_limit", "MAX_ATTEMPTS_IP", "MAX_ATTEMPTS_USER", "WINDOW_SECONDS"]

@@ -10,10 +10,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import requests
+import brotli as _brotli
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from pydantic import BaseModel, Field
 
 from . import cache
@@ -260,8 +264,82 @@ async def lifespan(app: FastAPI):
         pass
 
 
+class _BrotliMiddleware:
+    """Compresse les réponses en Brotli si le client l'accepte (Accept-Encoding: br).
+    Doit être ajouté APRÈS GZipMiddleware (i.e. add_middleware appelé en dernier)
+    pour être le wrapper extérieur et avoir la priorité sur gzip."""
+
+    def __init__(self, app: ASGIApp, minimum_size: int = 400, quality: int = 4) -> None:
+        self.app = app
+        self.minimum_size = minimum_size
+        self.quality = quality
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers", []))
+        if b"br" not in headers.get(b"accept-encoding", b""):
+            await self.app(scope, receive, send)
+            return
+        # Masque gzip dans Accept-Encoding pour que GZipMiddleware (inner) ne compresse pas :
+        # on gère la compression nous-mêmes dans _BrotliResponder.
+        new_headers = [
+            (k, b"br") if k == b"accept-encoding" else (k, v)
+            for k, v in scope.get("headers", [])
+        ]
+        scope = {**scope, "headers": new_headers}
+        responder = _BrotliResponder(send, self.minimum_size, self.quality)
+        await self.app(scope, receive, responder)
+
+
+class _BrotliResponder:
+    def __init__(self, send: Send, minimum_size: int, quality: int) -> None:
+        self._send = send
+        self.minimum_size = minimum_size
+        self.quality = quality
+        self._start: Message = {}
+        self._chunks: list[bytes] = []
+
+    async def __call__(self, message: Message) -> None:
+        if message["type"] == "http.response.start":
+            self._start = message
+            return
+        if message["type"] == "http.response.body":
+            self._chunks.append(message.get("body", b""))
+            if message.get("more_body", False):
+                return
+            body = b"".join(self._chunks)
+            headers = MutableHeaders(raw=list(self._start.get("headers", [])))
+            if len(body) >= self.minimum_size and not headers.get("content-encoding"):
+                compressed = _brotli.compress(body, quality=self.quality)
+                if len(compressed) < len(body):
+                    headers["content-encoding"] = "br"
+                    headers["content-length"] = str(len(compressed))
+                    vary = headers.get("vary", "")
+                    headers["vary"] = f"{vary}, Accept-Encoding".lstrip(", ") if vary else "Accept-Encoding"
+                    body = compressed
+            self._start["headers"] = headers.raw
+            await self._send(self._start)
+            await self._send({"type": "http.response.body", "body": body, "more_body": False})
+
+
+class _ImmutableStaticFiles(StaticFiles):
+    """Ajoute Cache-Control: immutable sur les assets hashés par Vite."""
+
+    async def get_response(self, path: str, scope: Scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 app = FastAPI(title="Notes IUT Dashboard", lifespan=lifespan)
+# Ordre : GZip ajouté en premier (wrapper intérieur), Brotli ajouté en second (wrapper extérieur).
+# Starlette exécute les middlewares en ordre inverse d'ajout → Brotli vérifié en premier,
+# si Accept-Encoding: br → compresse en brotli ; sinon la requête traverse jusqu'à GZip.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(_BrotliMiddleware, minimum_size=400, quality=4)
 logger = logging.getLogger("notes_iut.api")
 
 COOKIE_SID = "sid"
@@ -354,6 +432,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     # style-src 'unsafe-inline' requis pour recharts (inline styles sur les éléments SVG).
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
@@ -407,11 +486,16 @@ def _set_remember_cookie(response: Response, token: str) -> None:
 
 
 def _client_ip(request: Request) -> str | None:
-    # Derrière Docker/Nginx, request.client.host est l'IP du proxy. On lit X-Forwarded-For
-    # (positionné par le reverse-proxy) pour obtenir l'IP réelle du client.
+    # X-Real-IP est positionné par nginx à $remote_addr — ne peut pas être forgé par le client.
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    # X-Forwarded-For : nginx AJOUTE $remote_addr en dernier via proxy_add_x_forwarded_for.
+    # Lire la dernière entrée (ajoutée par le proxy de confiance) et non la première
+    # (qui peut être forgée par le client en envoyant un header X-Forwarded-For arbitraire).
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        return forwarded.split(",")[-1].strip()
     return request.client.host if request.client else None
 
 
@@ -800,7 +884,7 @@ def api_push_test(request: Request):
 # ── SPA fallback ──────────────────────────────────────────────────────────────
 
 if FRONTEND_DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+    app.mount("/assets", _ImmutableStaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
     DIST_ROOT = FRONTEND_DIST.resolve()
 
