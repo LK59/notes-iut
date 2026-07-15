@@ -165,7 +165,7 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                   <p>Dernier succès : {fmtTime(user.last_success_at as number | undefined)}</p>
                   <p>Prochain essai : {fmtTime(user.next_retry_at as number | undefined)}</p>
                   <p>Nouvelles notes dernier check : {fmtValue(user.last_new_grades_count)}</p>
-                  {user.last_error && <p className="text-red-600 dark:text-red-400">Erreur : {fmtValue(user.last_error)}</p>}
+                  {Boolean(user.last_error) && <p className="text-red-600 dark:text-red-400">Erreur : {fmtValue(user.last_error)}</p>}
                 </div>
               ))}
             </div>

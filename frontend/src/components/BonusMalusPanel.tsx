@@ -58,10 +58,10 @@ export default function BonusMalusPanel({ releve }: { releve: Releve }) {
                 {code}
                 {ue.bonus_description ? ` — ${ue.bonus_description}` : ""}
               </p>
-              {Object.entries(ue.modules || {}).map(([modCode, mod]) => {
+              {Object.entries<import("../types").ModuleEntry>(ue.modules || {}).map(([modCode, mod]) => {
                 const evaluations = Array.isArray(mod.evaluations)
                   ? mod.evaluations
-                  : Object.values(mod.evaluations || {});
+                  : (Object.values(mod.evaluations || {}) as typeof mod.evaluations);
                 return (
                   <div key={modCode} className="pl-2 space-y-0.5">
                     {evaluations.map((ev, idx) => (

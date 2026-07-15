@@ -45,8 +45,7 @@ window.addEventListener(
 );
 
 window.addEventListener("vite:preloadError", (event) => {
-  const payload = (event as CustomEvent<unknown>).detail ?? event;
-  if (recoverFromChunkLoadError(null, payload)) {
+  if (recoverFromChunkLoadError(null, event.payload)) {
     event.preventDefault();
   }
 });

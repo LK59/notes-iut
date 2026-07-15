@@ -87,7 +87,7 @@ function validateSemestresPayload(data: unknown): PremiereConnexionResponse {
       "Le portail de notes a renvoye une reponse invalide. Reessaie dans quelques minutes."
     );
   }
-  return result.data as PremiereConnexionResponse;
+  return result.data as unknown as PremiereConnexionResponse;
 }
 
 function validateRelevePayload(data: unknown): ReleveResponse {
@@ -97,7 +97,7 @@ function validateRelevePayload(data: unknown): ReleveResponse {
       "Le portail de notes a renvoye un releve invalide. Reessaie dans quelques minutes."
     );
   }
-  return result.data as ReleveResponse;
+  return result.data as unknown as ReleveResponse;
 }
 
 /**
