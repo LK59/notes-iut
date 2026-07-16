@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { login } from "../api";
+import { login, LOGIN_STAGE_LABELS } from "../api";
 import ThemeToggle from "./ThemeToggle";
 
 export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: string, isAdmin?: boolean) => void }) {
@@ -8,6 +8,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
   const [remember, setRemember] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [stage, setStage] = useState<string | undefined>(undefined);
   const usernameRef = useRef<HTMLInputElement>(null);
 
   // Autofocus uniquement sur pointeur "fin" (souris/trackpad) : sur écran tactile, focus
@@ -23,13 +24,18 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
     e.preventDefault();
     setError(null);
     setLoading(true);
+    setStage(undefined);
     try {
-      const res = await login(username, password, remember);
+      // Le login CAS enchaîne plusieurs appels externes séquentiels côté serveur : on affiche
+      // l'étape en cours (remontée par le job de fond, voir api.ts) plutôt que de laisser le
+      // bouton "Connexion..." muet pendant plusieurs secondes.
+      const res = await login(username, password, remember, setStage);
       onLoggedIn(res.username, res.isAdmin);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Échec de la connexion");
     } finally {
       setLoading(false);
+      setStage(undefined);
     }
   }
 
@@ -95,6 +101,11 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
             </p>
           )}
         </div>
+        {loading && !error && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {stage ? LOGIN_STAGE_LABELS[stage] ?? "Connexion en cours..." : "Connexion en cours..."}
+          </p>
+        )}
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <button
           type="submit"

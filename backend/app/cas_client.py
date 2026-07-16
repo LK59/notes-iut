@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from typing import Callable
 
 import requests
 from bs4 import BeautifulSoup
@@ -117,8 +118,24 @@ def _extract_cas_error(html: str) -> str:
     return "Échec de l'authentification CAS (réponse inattendue du portail)"
 
 
-def login(username: str, password: str) -> ScodocSession:
-    """Effectue le flow CAS complet et retourne une session HTTP authentifiée."""
+LOGIN_HOP_TIMEOUT = 10
+# Avant, le login tournait sur la connexion HTTP synchrone du client : un timeout court
+# (moins de 20s) risquait de couper une requête qui aurait fini par aboutir. Maintenant que
+# /api/login tourne en tâche de fond et que le client poll un statut (voir main.py), on n'a
+# plus cette contrainte : on peut échouer plus vite sur un saut CAS mort plutôt que de faire
+# attendre jusqu'à 60s (3 sauts x 20s) avant un message d'erreur.
+
+
+def login(username: str, password: str, on_stage: "Callable[[str], None] | None" = None) -> ScodocSession:
+    """Effectue le flow CAS complet et retourne une session HTTP authentifiée.
+
+    on_stage(stage) est appelé avant chaque appel réseau, pour remonter une progression
+    lisible côté client (utile pour un login qui tourne en tâche de fond)."""
+
+    def _stage(name: str) -> None:
+        if on_stage:
+            on_stage(name)
+
     session = requests.Session()
     session.headers.update(
         {
@@ -134,8 +151,9 @@ def login(username: str, password: str) -> ScodocSession:
     # doAuth.php, sans ticket, redirige (302) vers le CAS avec le bon `service`
     # généré par phpCAS lui-même (basé sur HTTP_HOST, sans le chemin) : on laisse
     # requests suivre cette redirection pour atterrir sur la vraie page de login.
+    _stage("contacting_site")
     try:
-        resp = session.get(DO_AUTH_URL, params={"href": f"{SITE_BASE}/"}, timeout=20)
+        resp = session.get(DO_AUTH_URL, params={"href": f"{SITE_BASE}/"}, timeout=LOGIN_HOP_TIMEOUT)
         resp.raise_for_status()
     except requests.Timeout as exc:
         raise CasUnavailable("Le service de connexion met trop de temps a repondre.") from exc
@@ -164,6 +182,7 @@ def login(username: str, password: str) -> ScodocSession:
         "_eventId": "submit",
         "geolocation": "",
     }
+    _stage("cas_login")
     try:
         resp = session.post(
             f"{CAS_BASE}/login",
@@ -174,7 +193,7 @@ def login(username: str, password: str) -> ScodocSession:
                 "Referer": login_url,
             },
             allow_redirects=False,
-            timeout=20,
+            timeout=LOGIN_HOP_TIMEOUT,
         )
     except requests.Timeout as exc:
         raise CasUnavailable("Le service de connexion met trop de temps a repondre.") from exc
@@ -204,8 +223,9 @@ def login(username: str, password: str) -> ScodocSession:
     if not location or "ticket=" not in location:
         raise CasUnexpectedResponse("Reponse CAS inattendue : pas de ticket dans la redirection.")
 
+    _stage("validating_session")
     try:
-        resp = session.get(location, timeout=20)
+        resp = session.get(location, timeout=LOGIN_HOP_TIMEOUT)
         resp.raise_for_status()
     except requests.Timeout as exc:
         raise ScodocUnavailable("Le portail de notes met trop de temps a valider la session.") from exc
@@ -216,6 +236,7 @@ def login(username: str, password: str) -> ScodocSession:
     except requests.RequestException as exc:
         raise ScodocUnavailable() from exc
 
+    _stage("loading_data")
     scodoc = ScodocSession(session=session)
     scodoc.bootstrap_data = validate_premiere_connexion_payload(scodoc.premiere_connexion())
     return scodoc

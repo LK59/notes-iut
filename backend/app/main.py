@@ -4,7 +4,9 @@ import asyncio
 import logging
 import os
 import json
+import threading
 import time
+import uuid
 import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -561,9 +563,67 @@ def api_health_deep(request: Request):
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
-@app.post("/api/login")
-def api_login(payload: LoginPayload, request: Request, response: Response):
+# Le login CAS enchaîne plusieurs appels HTTPS externes séquentiels (doAuth -> CAS ->
+# validation ticket -> data.php) qui peuvent légitimement prendre plusieurs secondes.
+# Garder la connexion HTTP du client ouverte et silencieuse pendant tout ce temps est
+# le pire cas pour les proxys d'entreprise avec inspection TLS : ils coupent souvent les
+# connexions "muettes" bien avant qu'aucun timeout applicatif ne se déclenche. On exécute
+# donc le login CAS en tâche de fond et le client poll un statut à intervalles courts :
+# chaque requête HTTP dure alors <1s, ce qui ne ressemble plus à une connexion figée.
+_login_jobs: dict[str, dict] = {}
+_login_jobs_lock = threading.Lock()
+LOGIN_JOB_TTL_SECONDS = 180
+
+
+def _cleanup_login_jobs() -> None:
+    cutoff = time.time() - LOGIN_JOB_TTL_SECONDS
+    with _login_jobs_lock:
+        stale = [job_id for job_id, job in _login_jobs.items() if job["created_at"] < cutoff]
+        for job_id in stale:
+            _login_jobs.pop(job_id, None)
+
+
+def _make_stage_updater(job_id: str):
+    """Remonte l'étape en cours du login CAS (contacting_site/cas_login/validating_session/
+    loading_data) pour que le client affiche une vraie progression pendant le polling."""
+
+    def _update_stage(stage: str) -> None:
+        with _login_jobs_lock:
+            job = _login_jobs.get(job_id)
+            if job is not None and job.get("status") == "pending":
+                job["stage"] = stage
+
+    return _update_stage
+
+
+def _run_login_job(job_id: str, username: str, password: str, remember: bool, user_agent: str | None, client_ip: str | None) -> None:
     started = time.perf_counter()
+    try:
+        scodoc = cas_login(username, password, on_stage=_make_stage_updater(job_id))
+        bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
+        cache.delete_user_cache(username)
+        cache.set_semestres(username, bootstrap)
+        sid = create_session(username, scodoc)
+        remember_token = (
+            cache.create_remember_token(username, password, user_agent, client_ip) if remember else None
+        )
+        _log_event(
+            "auth.login.ok",
+            username_hash=_safe_hash(username),
+            remember=remember,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
+        result = {"status": "ok", "sid": sid, "remember_token": remember_token, "username": username}
+    except Exception as exc:  # AppError ou imprévu : rejoué tel quel côté poll
+        result = {"status": "error", "error": exc}
+    with _login_jobs_lock:
+        if job_id in _login_jobs:
+            result["created_at"] = _login_jobs[job_id]["created_at"]
+            _login_jobs[job_id] = result
+
+
+@app.post("/api/login")
+def api_login(payload: LoginPayload, request: Request):
     client_ip = _client_ip(request) or "unknown"
     username_hash = _safe_hash(payload.username)
     # Double verrou : par IP (attaque distribuée sur plusieurs comptes) et par username
@@ -573,25 +633,54 @@ def api_login(payload: LoginPayload, request: Request, response: Response):
     if not ip_ok or not user_ok:
         _log_event("auth.login.rate_limited", username_hash=username_hash, ip_hash=_safe_hash(client_ip))
         raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes.")
-    scodoc = cas_login(payload.username, payload.password)
-    bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
 
-    cache.delete_user_cache(payload.username)
-    cache.set_semestres(payload.username, bootstrap)
-    sid = create_session(payload.username, scodoc)
-    _set_sid_cookie(response, sid)
+    _cleanup_login_jobs()
+    job_id = uuid.uuid4().hex
+    with _login_jobs_lock:
+        _login_jobs[job_id] = {"status": "pending", "created_at": time.time()}
+    threading.Thread(
+        target=_run_login_job,
+        args=(job_id, payload.username, payload.password, payload.remember, _user_agent(request), client_ip),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
 
-    if payload.remember:
-        token = cache.create_remember_token(payload.username, payload.password, _user_agent(request), _client_ip(request))
-        _set_remember_cookie(response, token)
 
-    _log_event(
-        "auth.login.ok",
-        username_hash=_safe_hash(payload.username),
-        remember=payload.remember,
-        duration_ms=int((time.perf_counter() - started) * 1000),
-    )
-    return {"ok": True, "username": payload.username, "isAdmin": _is_admin_username(payload.username)}
+@app.get("/api/login/status/{job_id}")
+def api_login_status(job_id: str, response: Response):
+    with _login_jobs_lock:
+        job = _login_jobs.get(job_id)
+        if job is not None and job["status"] != "pending":
+            del _login_jobs[job_id]
+    if job is None:
+        raise HTTPException(status_code=404, detail="Requête de connexion inconnue ou expirée.")
+    if job["status"] == "pending":
+        return {"status": "pending", "stage": job.get("stage")}
+    if job["status"] == "error":
+        raise job["error"]
+
+    _set_sid_cookie(response, job["sid"])
+    if job.get("remember_token"):
+        _set_remember_cookie(response, job["remember_token"])
+    return {"status": "ok", "ok": True, "username": job["username"], "isAdmin": _is_admin_username(job["username"])}
+
+
+def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, user_agent: str | None, client_ip: str | None) -> None:
+    try:
+        scodoc = cas_login(username, password, on_stage=_make_stage_updater(job_id))
+        bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
+        cache.set_semestres(username, bootstrap)
+        cache.delete_remember_token(old_token, user_agent, client_ip)
+        new_token = cache.create_remember_token(username, password, user_agent, client_ip)
+        sid = create_session(username, scodoc)
+        _log_event("auth.refresh.ok", username_hash=_safe_hash(username))
+        result = {"status": "ok", "sid": sid, "remember_token": new_token, "username": username}
+    except Exception as exc:
+        result = {"status": "error", "error": exc}
+    with _login_jobs_lock:
+        if job_id in _login_jobs:
+            result["created_at"] = _login_jobs[job_id]["created_at"]
+            _login_jobs[job_id] = result
 
 
 @app.post("/api/refresh")
@@ -618,17 +707,34 @@ def api_refresh(request: Request, response: Response):
         raise RememberTokenInvalid()
 
     username, password = creds
-    scodoc = cas_login(username, password)
-    bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
-    cache.set_semestres(username, bootstrap)
+    _cleanup_login_jobs()
+    job_id = uuid.uuid4().hex
+    with _login_jobs_lock:
+        _login_jobs[job_id] = {"status": "pending", "created_at": time.time()}
+    threading.Thread(
+        target=_run_refresh_job,
+        args=(job_id, username, password, token, _user_agent(request), client_ip),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
 
-    cache.delete_remember_token(token, _user_agent(request), _client_ip(request))
-    new_token = cache.create_remember_token(username, password, _user_agent(request), _client_ip(request))
-    sid = create_session(username, scodoc)
-    _set_sid_cookie(response, sid)
-    _set_remember_cookie(response, new_token)
-    _log_event("auth.refresh.ok", username_hash=_safe_hash(username))
-    return {"ok": True, "username": username, "isAdmin": _is_admin_username(username)}
+
+@app.get("/api/refresh/status/{job_id}")
+def api_refresh_status(job_id: str, response: Response):
+    with _login_jobs_lock:
+        job = _login_jobs.get(job_id)
+        if job is not None and job["status"] != "pending":
+            del _login_jobs[job_id]
+    if job is None:
+        raise HTTPException(status_code=404, detail="Requête de reconnexion inconnue ou expirée.")
+    if job["status"] == "pending":
+        return {"status": "pending", "stage": job.get("stage")}
+    if job["status"] == "error":
+        raise job["error"]
+
+    _set_sid_cookie(response, job["sid"])
+    _set_remember_cookie(response, job["remember_token"])
+    return {"status": "ok", "ok": True, "username": job["username"], "isAdmin": _is_admin_username(job["username"])}
 
 
 @app.post("/api/logout")

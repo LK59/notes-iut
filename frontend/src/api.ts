@@ -20,11 +20,14 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
 }
 
+// /api/login et /api/refresh renvoient un job_id immédiatement (voir pollAuthJob plus bas) :
+// le vrai login CAS tourne en fond côté serveur, donc chaque requête HTTP (POST initial et
+// polls de statut) reste courte et le timeout par défaut suffit partout.
 const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Sur connexion instable (typiquement iOS Safari en 4G faible), un fetch sans timeout peut
- * rester pendant indéfiniment. On force une erreur réseau explicite au bout de 15s,
+ * rester pendant indéfiniment. On force une erreur réseau explicite au bout d'un délai donné,
  * traitée comme une panne par withOfflineFallback().
  */
 async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
@@ -51,8 +54,16 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
     clearTimeout(timeout);
   }
 
-  // /api/refresh est lui-même le mécanisme de reauth — pas de boucle infinie.
-  if (resp.status === 401 && path !== "/api/login" && path !== "/api/refresh") {
+  // /api/refresh est lui-même le mécanisme de reauth — pas de boucle infinie. Ses statuts
+  // (ainsi que ceux de /api/login) peuvent aussi renvoyer 401 (identifiants invalides / token
+  // expiré) : pas de reauth silencieuse à tenter non plus, l'utilisateur n'est pas encore
+  // connecté à ce stade.
+  const isAuthPath =
+    path === "/api/login" ||
+    path === "/api/refresh" ||
+    path.startsWith("/api/login/status/") ||
+    path.startsWith("/api/refresh/status/");
+  if (resp.status === 401 && !isAuthPath) {
     if (!retried && (await trySilentReauth())) {
       return request<T>(path, init, true);
     }
@@ -107,7 +118,7 @@ function validateRelevePayload(data: unknown): ReleveResponse {
 let reauthInFlight: Promise<boolean> | null = null;
 function trySilentReauth(): Promise<boolean> {
   if (!reauthInFlight) {
-    reauthInFlight = request<{ ok: boolean; username: string; isAdmin?: boolean }>("/api/refresh", { method: "POST" })
+    reauthInFlight = pollAuthJob("/api/refresh", "/api/refresh/status/")
       .then(() => true)
       .catch(() => false)
       .finally(() => { reauthInFlight = null; });
@@ -121,7 +132,7 @@ function trySilentReauth(): Promise<boolean> {
  */
 export async function autoLoginIfRemembered(): Promise<{ username: string; isAdmin?: boolean } | null> {
   try {
-    const res = await request<{ ok: boolean; username: string; isAdmin?: boolean }>("/api/refresh", { method: "POST" });
+    const res = await pollAuthJob("/api/refresh", "/api/refresh/status/");
     return { username: res.username, isAdmin: res.isAdmin };
   } catch {
     return null;
@@ -147,11 +158,53 @@ async function withOfflineFallback<T>(cacheKey: string, fetcher: () => Promise<T
   }
 }
 
-export function login(username: string, password: string, remember = false) {
-  return request<{ ok: boolean; username: string; isAdmin?: boolean }>("/api/login", {
+const AUTH_JOB_POLL_INTERVAL_MS = 1500;
+const AUTH_JOB_POLL_MAX_MS = 60000;
+
+/**
+ * /api/login et /api/refresh lancent le flow CAS en tâche de fond côté serveur et renvoient
+ * un job_id immédiatement : on poll ensuite le statut. Chaque requête HTTP (POST initial et
+ * chaque poll) dure alors <15s, au lieu de garder une connexion ouverte et muette pendant
+ * toute la durée du login CAS — ce qui est exactement ce que coupent les proxys d'entreprise
+ * avec inspection TLS (timeout d'inactivité sur les connexions "silencieuses").
+ */
+async function pollAuthJob(
+  postPath: string,
+  statusPathPrefix: string,
+  body?: unknown,
+  onStage?: (stage: string | undefined) => void
+): Promise<{ ok: boolean; username: string; isAdmin?: boolean }> {
+  const { job_id } = await request<{ job_id: string }>(postPath, {
     method: "POST",
-    body: JSON.stringify({ username, password, remember }),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
+
+  const deadline = Date.now() + AUTH_JOB_POLL_MAX_MS;
+  for (;;) {
+    const res = await request<{ status: string; ok?: boolean; username?: string; isAdmin?: boolean; stage?: string }>(
+      `${statusPathPrefix}${job_id}`
+    );
+    if (res.status === "ok") {
+      return { ok: true, username: res.username as string, isAdmin: res.isAdmin };
+    }
+    onStage?.(res.stage);
+    if (Date.now() > deadline) {
+      throw new Error("Délai dépassé — connexion trop lente ou instable.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, AUTH_JOB_POLL_INTERVAL_MS));
+  }
+}
+
+/** Libellés affichés pendant le login le temps que le job de fond progresse (voir main.py). */
+export const LOGIN_STAGE_LABELS: Record<string, string> = {
+  contacting_site: "Connexion au portail de l'université...",
+  cas_login: "Vérification des identifiants au CAS...",
+  validating_session: "Validation de la session...",
+  loading_data: "Chargement de tes données...",
+};
+
+export function login(username: string, password: string, remember = false, onStage?: (stage: string | undefined) => void) {
+  return pollAuthJob("/api/login", "/api/login/status/", { username, password, remember }, onStage);
 }
 
 export function logout() {

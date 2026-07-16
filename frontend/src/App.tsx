@@ -44,6 +44,22 @@ export default function App() {
     return () => window.removeEventListener("pageshow", onPageShow);
   }, []);
 
+  // En PWA standalone (mobile), l'app n'est jamais vraiment "fermée" : elle passe en arrière-plan
+  // puis revient au premier plan sans rechargement ni navigation, donc ni "pageshow" ni le focus
+  // de fenêtre (peu fiable en standalone) ne se déclenchent. On utilise visibilitychange, qui lui
+  // se déclenche de façon fiable dans ce cas : on revalide la session (elle a pu expirer pendant
+  // l'absence) et on relance un refetch en fond des données affichées, pour que l'utilisateur
+  // retrouve toujours un état à jour sans avoir à quitter/rouvrir l'app.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      checkAuth();
+      queryClient.invalidateQueries();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [queryClient]);
+
   // Session serveur courte (4h) : si une requête API renvoie 401 en cours d'usage,
   // on retombe proprement sur l'écran de connexion plutôt que de laisser une erreur affichée.
   useEffect(() => {
