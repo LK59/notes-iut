@@ -1,6 +1,15 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
-import { clearServerCache, getReleve, getSemestres, logout } from "../api";
+import {
+  clearServerCache,
+  getReleve,
+  getSemestres,
+  logout,
+  reconnectNow,
+  setCacheFallbackHandler,
+  type CacheFallbackReason,
+  type ReauthWarning,
+} from "../api";
 import { cacheGet, cacheSet, clearDataCache } from "../offlineCache";
 import type { AbsencesByDate, Releve, ReleveResponse, Semestre } from "../types";
 import { moyenneGenerale, newlyPublishedIds, numericNoteValue, pendingItems, semesterMoyenne, ueMoyenne } from "../simulator";
@@ -68,7 +77,19 @@ function saveSimulation(semestreId: string, overrides: Record<string, number>) {
 }
 
 
-export default function Dashboard({ username, isAdmin, onLoggedOut }: { username: string; isAdmin?: boolean; onLoggedOut: () => void }) {
+export default function Dashboard({
+  username,
+  isAdmin,
+  reauthWarning,
+  onReconnected,
+  onLoggedOut,
+}: {
+  username: string;
+  isAdmin?: boolean;
+  reauthWarning?: ReauthWarning;
+  onReconnected?: () => void;
+  onLoggedOut: () => void;
+}) {
   const queryClient = useQueryClient();
   const [semestreId, setSemestreId] = useState<string | null>(null);
   const [gradeHistory, setGradeHistory] = useState<GradeHistoryItem[]>([]);
@@ -81,8 +102,29 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
   const [printMode, setPrintMode] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [cacheFallback, setCacheFallback] = useState<CacheFallbackReason | null>(null);
   const online = useOnline();
   const { view, setView } = useViewMode();
+
+  useEffect(() => {
+    setCacheFallbackHandler(setCacheFallback);
+    return () => setCacheFallbackHandler(null);
+  }, []);
+
+  async function handleReconnect() {
+    setReconnecting(true);
+    try {
+      await reconnectNow();
+      onReconnected?.();
+    } catch {
+      // La session courante reste valide (4h) même si le renouvellement échoue : pas
+      // besoin de bloquer l'utilisateur, il pourra retenter plus tard ou se reconnecter
+      // normalement quand sa session expirera.
+    } finally {
+      setReconnecting(false);
+    }
+  }
 
   // ── Bootstrap ──────────────────────────────────────────────────────────────
   const { data: bootstrap, isLoading, error: bootstrapError } = useQuery({
@@ -440,9 +482,32 @@ export default function Dashboard({ username, isAdmin, onLoggedOut }: { username
         {view === "complet" && <SectionNav />}
         <GradeHistoryPanel items={gradeHistory} />
 
-        {!online && (
+        {(!online || cacheFallback === "offline") && (
           <div className="print:hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm rounded-lg p-3">
             Mode hors-ligne : affichage des dernières données enregistrées sur cet appareil, possiblement obsolètes.
+          </div>
+        )}
+
+        {online && cacheFallback === "scodoc_down" && (
+          <div className="print:hidden bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm rounded-lg p-3">
+            Le portail de notes de l'IUT est indisponible pour le moment : affichage des dernières données connues.
+          </div>
+        )}
+
+        {reauthWarning && (
+          <div className="print:hidden flex items-center justify-between gap-3 flex-wrap bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm rounded-lg p-3">
+            <span>
+              {reauthWarning === "idle"
+                ? "Tu n'as pas ouvert l'app depuis un moment : ta connexion va bientôt expirer."
+                : "Ta connexion arrive à expiration : reconnecte-toi pour continuer à recevoir tes notes."}
+            </span>
+            <button
+              onClick={handleReconnect}
+              disabled={reconnecting}
+              className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
+            >
+              {reconnecting ? "Reconnexion…" : "Se reconnecter"}
+            </button>
           </div>
         )}
 

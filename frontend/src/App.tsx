@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { autoLoginIfRemembered, me, setUnauthorizedHandler } from "./api";
+import { autoLoginIfRemembered, me, setUnauthorizedHandler, type ReauthWarning } from "./api";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 
@@ -9,6 +9,7 @@ export default function App() {
   const [username, setUsername] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
+  const [reauthWarning, setReauthWarning] = useState<ReauthWarning>(null);
 
   function checkAuth() {
     me()
@@ -16,6 +17,7 @@ export default function App() {
         if (res.authenticated) {
           setUsername(res.username ?? null);
           setIsAdmin(Boolean(res.isAdmin));
+          setReauthWarning(res.reauthWarning ?? null);
           return;
         }
         // /api/me ne renvoie jamais 401 (par design). Le serveur voit le cookie HttpOnly
@@ -23,10 +25,12 @@ export default function App() {
         const refreshed = res.canRefresh ? await autoLoginIfRemembered() : null;
         setUsername(refreshed?.username ?? null);
         setIsAdmin(Boolean(refreshed?.isAdmin));
+        setReauthWarning(null);
       })
       .catch(() => {
         setUsername(null);
         setIsAdmin(false);
+        setReauthWarning(null);
       })
       .finally(() => setChecking(false));
   }
@@ -85,5 +89,13 @@ export default function App() {
     return <LoginPage onLoggedIn={(name, admin) => { setUsername(name); setIsAdmin(Boolean(admin)); }} />;
   }
 
-  return <Dashboard username={username} isAdmin={isAdmin} onLoggedOut={() => { setUsername(null); setIsAdmin(false); }} />;
+  return (
+    <Dashboard
+      username={username}
+      isAdmin={isAdmin}
+      reauthWarning={reauthWarning}
+      onReconnected={() => setReauthWarning(null)}
+      onLoggedOut={() => { setUsername(null); setIsAdmin(false); setReauthWarning(null); }}
+    />
+  );
 }

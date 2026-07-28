@@ -44,8 +44,14 @@ PUSH_POLL_INTERVAL = int(os.environ.get("PUSH_POLL_INTERVAL", "600"))  # 10 minu
 PUSH_INITIAL_DELAY = int(os.environ.get("PUSH_INITIAL_DELAY", "60"))
 PUSH_MAX_CONCURRENT_CHECKS = int(os.environ.get("PUSH_MAX_CONCURRENT_CHECKS", "2"))
 PUSH_BACKOFF_MAX_SECONDS = int(os.environ.get("PUSH_BACKOFF_MAX_SECONDS", "3600"))
+# Étale les vérifications dans le temps au lieu d'un sweep groupé toutes les 10 min (voir
+# _push_polling_loop) : chaque utilisateur garde une cadence moyenne de PUSH_POLL_INTERVAL,
+# mais décalée d'un jitter stable par compte, pour ne pas présenter au CAS/ScoDoc de l'IUT
+# une rafale de logins synchronisés depuis la seule IP du serveur.
+PUSH_TICK_INTERVAL_SECONDS = int(os.environ.get("PUSH_TICK_INTERVAL_SECONDS", "60"))
+PUSH_STAGGER_WINDOW_SECONDS = int(os.environ.get("PUSH_STAGGER_WINDOW_SECONDS", "300"))
+REAUTH_WARNING_WINDOW_SECONDS = 24 * 3600
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:notes-iut@example.com")
-_push_poll_lock = asyncio.Lock()
 
 
 
@@ -148,6 +154,69 @@ def _push_backoff_delay(username: str) -> int:
     return min(PUSH_BACKOFF_MAX_SECONDS, PUSH_POLL_INTERVAL * (2 ** min(failures, 6)))
 
 
+def _reauth_warning_for_username(username: str) -> str | None:
+    """"idle" si le remember-token va expirer par inactivité (personne n'a rouvert l'app
+    depuis REMEMBER_IDLE_TTL - 24h), "absolute" si c'est son plafond de 30 jours qui approche,
+    None sinon. Utilisé à la fois par /api/me (bandeau) et par le polling push (notification)."""
+    deadlines = cache.get_background_token_deadlines(username)
+    if not deadlines:
+        return None
+    now = time.time()
+    if 0 < deadlines["idle_deadline"] - now <= REAUTH_WARNING_WINDOW_SECONDS:
+        return "idle"
+    if 0 < deadlines["absolute_deadline"] - now <= REAUTH_WARNING_WINDOW_SECONDS:
+        return "absolute"
+    return None
+
+
+def _maybe_send_reauth_warning(username: str) -> None:
+    """Notifie une seule fois par token les abonnés push dont la reconnexion automatique
+    (remember-token) va bientôt s'arrêter de fonctionner — sans quoi l'expiration est silencieuse :
+    plus de polling, plus de reconnexion auto, jusqu'à ce qu'ils ressaisissent leur mot de passe."""
+    deadlines = cache.get_background_token_deadlines(username)
+    if not deadlines:
+        return
+    now = time.time()
+    token_hash = deadlines["token_hash"]
+    warned = cache.get_reauth_warning_state(username)
+    subs: list[dict] | None = None
+
+    def _warn_once(deadline: float, field: str, message: dict) -> None:
+        nonlocal subs
+        if not (0 < deadline - now <= REAUTH_WARNING_WINDOW_SECONDS):
+            return
+        if warned.get(field) == token_hash:
+            return
+        if subs is None:
+            subs = cache.get_push_subscriptions(username)
+        if not subs:
+            return
+        sent = _send_push(subs, message)
+        cache.mark_reauth_warning_sent(username, field, token_hash)
+        _log_event("push.reauth_warning.sent", username_hash=_safe_hash(username), kind=field, sent=sent)
+
+    _warn_once(
+        deadlines["idle_deadline"],
+        "idle_warning_token_hash",
+        {
+            "title": "Ouvre l'app pour garder tes notifications",
+            "body": "Tu n'as pas ouvert Notes IUT depuis un moment : ta connexion va bientôt expirer.",
+            "url": "/",
+            "tag": "notes-iut-reauth-idle",
+        },
+    )
+    _warn_once(
+        deadlines["absolute_deadline"],
+        "absolute_warning_token_hash",
+        {
+            "title": "Reconnexion nécessaire bientôt",
+            "body": "Reconnecte-toi dans l'app pour continuer à recevoir tes notes.",
+            "url": "/",
+            "tag": "notes-iut-reauth-absolute",
+        },
+    )
+
+
 def _push_scodoc_session_and_bootstrap(username: str, password: str) -> tuple[ScodocSession, dict]:
     """Réutilise la session ScoDoc persistée du dernier poll plutôt que de refaire un login
     CAS complet à chaque cycle (voir save_push_session). Retombe sur un login complet si la
@@ -162,8 +231,16 @@ def _push_scodoc_session_and_bootstrap(username: str, password: str) -> tuple[Sc
             bootstrap = validate_premiere_connexion_payload(scodoc.premiere_connexion())
             cache.save_push_session(username, http_session.cookies.get_dict())
             return scodoc, bootstrap
-        except ScodocSessionRejected:
-            pass
+        except Exception as exc:
+            # Session rejetée (cas propre) ou erreur ambiguë (réseau, réponse invalide) : dans
+            # les deux cas on retombe sur un login CAS complet plutôt que d'abandonner le poll,
+            # comme avant l'introduction de la réutilisation de session.
+            _log_event(
+                "push.poll.session_reuse_failed",
+                username_hash=_safe_hash(username),
+                error=str(exc),
+                rejected=isinstance(exc, ScodocSessionRejected),
+            )
 
     scodoc = cas_login(username, password)
     bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
@@ -186,6 +263,10 @@ def _push_poll_user(username: str) -> None:
         _log_event("push.poll.no_credentials", username_hash=_safe_hash(username))
         return
     _username, password = creds
+    try:
+        _maybe_send_reauth_warning(_username)
+    except Exception:
+        logger.exception("Erreur envoi avertissement de reconnexion")
     semestre_id: str | None = None
     try:
         scodoc, bootstrap = _push_scodoc_session_and_bootstrap(_username, password)
@@ -250,31 +331,62 @@ def _push_poll_user(username: str) -> None:
         )
 
 
+def _user_stagger_offset_seconds(username: str) -> int:
+    """Décalage stable par compte (dérivé d'un hash, pas re-tiré à chaque tick) : fait
+    dériver la cadence individuelle de chaque utilisateur autour de PUSH_POLL_INTERVAL au
+    lieu d'un sweep synchronisé de tout le monde toutes les 10 minutes pile."""
+    digest = hashlib.sha256(username.encode()).digest()
+    return int.from_bytes(digest[:4], "big") % max(1, PUSH_STAGGER_WINDOW_SECONDS)
+
+
 async def _push_polling_loop() -> None:
+    """Tick léger et fréquent plutôt qu'un sweep groupé toutes les PUSH_POLL_INTERVAL : chaque
+    utilisateur est vérifié dès que sa propre échéance (dernier check + intervalle + jitter
+    stable) est passée, ce qui étale les checks — et donc les logins CAS de secours — dans le
+    temps au lieu de présenter une rafale synchronisée depuis l'IP du serveur."""
     await asyncio.sleep(PUSH_INITIAL_DELAY)  # délai initial au démarrage
     loop = asyncio.get_event_loop()
+    semaphore = asyncio.Semaphore(max(1, PUSH_MAX_CONCURRENT_CHECKS))
+    inflight: set[str] = set()
+
+    async def run_user(username: str) -> None:
+        try:
+            async with semaphore:
+                try:
+                    await loop.run_in_executor(None, _push_poll_user, username)
+                except Exception:
+                    logger.exception("Erreur polling push pour un utilisateur")
+        finally:
+            inflight.discard(username)
+
     while True:
         try:
-            if _push_poll_lock.locked():
-                _log_event("push.poll.cycle_skipped_overlap")
-            else:
-                async with _push_poll_lock:
-                    usernames = cache.list_subscribed_usernames()
-                    _log_event("push.poll.cycle_started", subscribed_users=len(usernames))
-                    semaphore = asyncio.Semaphore(max(1, PUSH_MAX_CONCURRENT_CHECKS))
-
-                    async def run_user(username: str) -> None:
-                        async with semaphore:
-                            try:
-                                await loop.run_in_executor(None, _push_poll_user, username)
-                            except Exception:
-                                logger.exception("Erreur polling push pour un utilisateur")
-
-                    await asyncio.gather(*(run_user(username) for username in usernames))
-                    _log_event("push.poll.cycle_finished", subscribed_users=len(usernames))
+            now = time.time()
+            usernames = cache.list_subscribed_usernames()
+            due = []
+            for username in usernames:
+                if username in inflight:
+                    continue
+                state = cache.get_push_poll_state(username)
+                next_retry_at = state.get("next_retry_at")
+                if next_retry_at and now < float(next_retry_at):
+                    continue
+                last_started_at = state.get("last_started_at")
+                due_interval = PUSH_POLL_INTERVAL + _user_stagger_offset_seconds(username)
+                if last_started_at and now - float(last_started_at) < due_interval:
+                    continue
+                due.append(username)
+            if due:
+                _log_event("push.poll.tick", due=len(due), subscribed_users=len(usernames))
+                for username in due:
+                    inflight.add(username)
+                    asyncio.create_task(run_user(username))
+            orphaned = cache.purge_orphaned_push_sessions()
+            if orphaned:
+                _log_event("push.session_cache.orphans_purged", count=orphaned)
         except Exception:
             logger.exception("Erreur dans la boucle de polling push")
-        await asyncio.sleep(PUSH_POLL_INTERVAL)
+        await asyncio.sleep(PUSH_TICK_INTERVAL_SECONDS)
 
 
 LOGIN_JOBS_CLEANUP_INTERVAL_SECONDS = 60
@@ -798,7 +910,12 @@ def api_me(request: Request):
     session = get_session(request.cookies.get(COOKIE_SID))
     if session is None:
         return {"authenticated": False, "canRefresh": bool(request.cookies.get(COOKIE_REMEMBER))}
-    return {"authenticated": True, "username": session.username, "isAdmin": _is_admin_username(session.username)}
+    return {
+        "authenticated": True,
+        "username": session.username,
+        "isAdmin": _is_admin_username(session.username),
+        "reauthWarning": _reauth_warning_for_username(session.username),
+    }
 
 
 @app.delete("/api/cache/me")

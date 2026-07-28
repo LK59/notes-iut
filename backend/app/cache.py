@@ -206,6 +206,11 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    _ensure_columns(
+        conn,
+        "push_poll_state",
+        {"idle_warning_token_hash": "TEXT", "absolute_warning_token_hash": "TEXT"},
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rate_limit (
@@ -691,6 +696,20 @@ def delete_push_session(username: str) -> None:
     conn.commit()
 
 
+def purge_orphaned_push_sessions() -> int:
+    """Nettoie les sessions push d'utilisateurs qui ne sont plus abonnés à aucune notification."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT username FROM push_sessions WHERE username NOT IN (SELECT DISTINCT username FROM push_subscriptions)"
+    ).fetchall()
+    if rows:
+        conn.execute(
+            "DELETE FROM push_sessions WHERE username NOT IN (SELECT DISTINCT username FROM push_subscriptions)"
+        )
+        conn.commit()
+    return len(rows)
+
+
 def list_remember_sessions(username: str) -> list[dict]:
     conn = _connect()
     rows = conn.execute(
@@ -1168,6 +1187,59 @@ def get_credentials_for_background(username: str) -> tuple[str, str] | None:
         return (username, password)
     except InvalidToken:
         return None
+
+
+def get_background_token_deadlines(username: str) -> dict | None:
+    """Échéances du remember-token utilisé pour le polling en tâche de fond (le plus
+    récemment actif) : au-delà, get_credentials_for_background ne trouvera plus rien et
+    la reconnexion automatique/le polling push s'arrêteront silencieusement."""
+    conn = _connect()
+    row = conn.execute(
+        """
+        SELECT token_hash, created_at, last_used_at, expires_at
+        FROM remember_tokens
+        WHERE username = ? AND expires_at > ?
+        ORDER BY COALESCE(last_used_at, created_at, 0) DESC
+        LIMIT 1
+        """,
+        (username, time.time()),
+    ).fetchone()
+    if not row:
+        return None
+    token_hash, created_at, last_used_at, expires_at = row
+    last_seen = last_used_at or created_at or time.time()
+    return {
+        "token_hash": token_hash,
+        "absolute_deadline": expires_at,
+        "idle_deadline": last_seen + REMEMBER_IDLE_TTL,
+    }
+
+
+def get_reauth_warning_state(username: str) -> dict:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT idle_warning_token_hash, absolute_warning_token_hash FROM push_poll_state WHERE username = ?",
+        (username,),
+    ).fetchone()
+    return {
+        "idle_warning_token_hash": row[0] if row else None,
+        "absolute_warning_token_hash": row[1] if row else None,
+    }
+
+
+def mark_reauth_warning_sent(username: str, field: str, token_hash: str) -> None:
+    if field not in ("idle_warning_token_hash", "absolute_warning_token_hash"):
+        raise ValueError(f"champ d'avertissement inconnu : {field}")
+    conn = _connect()
+    conn.execute(
+        f"""
+        INSERT INTO push_poll_state (username, {field})
+        VALUES (?, ?)
+        ON CONFLICT(username) DO UPDATE SET {field} = excluded.{field}
+        """,
+        (username, token_hash),
+    )
+    conn.commit()
 
 
 # ── Rate limiting persisté en SQLite ─────────────────────────────────────────

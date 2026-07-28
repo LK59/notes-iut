@@ -139,20 +139,38 @@ export async function autoLoginIfRemembered(): Promise<{ username: string; isAdm
   }
 }
 
+export type CacheFallbackReason = "offline" | "scodoc_down";
+
+/** Notifie l'UI qu'on affiche des données en cache (et pourquoi), pour un bandeau discret
+ * plutôt qu'un écran d'erreur — voir withOfflineFallback(). null = données fraîches. */
+let onCacheFallback: ((reason: CacheFallbackReason | null) => void) | null = null;
+export function setCacheFallbackHandler(fn: ((reason: CacheFallbackReason | null) => void) | null) {
+  onCacheFallback = fn;
+}
+
 /**
- * Network-first : on tente toujours le réseau d'abord. Le cache local n'est utilisé
- * en repli que si on est hors-ligne ou si fetch échoue avant d'obtenir une réponse HTTP.
+ * Network-first : on tente toujours le réseau d'abord. Le cache local n'est utilisé en repli
+ * si on est hors-ligne, si fetch échoue avant d'obtenir une réponse HTTP (timeout, coupure),
+ * ou si notre backend répond proprement que ScoDoc lui-même est indisponible (502/503) —
+ * dans ce dernier cas une erreur HTTP "propre" existe, donc il ne faut pas la confondre avec
+ * une vraie panne réseau : sans ce cas, l'utilisateur voyait un écran d'erreur au lieu des
+ * dernières données connues alors qu'elles étaient disponibles en cache.
  */
 async function withOfflineFallback<T>(cacheKey: string, fetcher: () => Promise<T>): Promise<T> {
   try {
     const data = await fetcher();
     cacheSet(cacheKey, data);
+    onCacheFallback?.(null);
     return data;
   } catch (err) {
+    const scodocDown = err instanceof HttpError && (err.status === 502 || err.status === 503);
     const networkFailure = !navigator.onLine || !(err instanceof HttpError);
-    if (networkFailure) {
+    if (networkFailure || scodocDown) {
       const cached = cacheGet<T>(cacheKey);
-      if (cached) return cached;
+      if (cached) {
+        onCacheFallback?.(networkFailure ? "offline" : "scodoc_down");
+        return cached;
+      }
     }
     throw err;
   }
@@ -212,8 +230,22 @@ export function logout() {
   return request<{ ok: boolean }>("/api/logout", { method: "POST" });
 }
 
+export type ReauthWarning = "idle" | "absolute" | null;
+
 export function me() {
-  return request<{ authenticated: boolean; username?: string; canRefresh?: boolean; isAdmin?: boolean }>("/api/me");
+  return request<{
+    authenticated: boolean;
+    username?: string;
+    canRefresh?: boolean;
+    isAdmin?: boolean;
+    reauthWarning?: ReauthWarning;
+  }>("/api/me");
+}
+
+/** Reconnexion explicite (bouton du bandeau d'avertissement) : redemande un sid + un
+ * remember-token frais via le cookie remember existant, sans ressaisie du mot de passe. */
+export function reconnectNow() {
+  return pollAuthJob("/api/refresh", "/api/refresh/status/");
 }
 
 export function clearServerCache() {
