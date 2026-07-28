@@ -214,6 +214,16 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessions (
+            sid TEXT NOT NULL PRIMARY KEY,
+            username TEXT NOT NULL,
+            encrypted_cookies TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+        """
+    )
 
 
 def _connect() -> sqlite3.Connection:
@@ -590,6 +600,50 @@ def delete_remember_token(token: str, user_agent: str | None = None, ip_address:
     except Exception:
         conn.rollback()
         raise
+
+
+# ── Sessions serveur persistées ────────────────────────────────────────────
+# Les cookies de session ScoDoc/CAS sont chiffrés comme un mot de passe : ils
+# donnent un accès complet au compte tant que la session CAS distante est valide.
+
+def save_session(sid: str, username: str, cookies: dict[str, str], created_at: float) -> None:
+    encrypted = _get_fernet().encrypt(json.dumps(cookies).encode()).decode()
+    conn = _connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO sessions (sid, username, encrypted_cookies, created_at) VALUES (?, ?, ?, ?)",
+        (sid, username, encrypted, created_at),
+    )
+    conn.commit()
+
+
+def delete_session_row(sid: str) -> None:
+    conn = _connect()
+    conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+    conn.commit()
+
+
+def purge_expired_sessions(cutoff: float) -> None:
+    conn = _connect()
+    conn.execute("DELETE FROM sessions WHERE created_at < ?", (cutoff,))
+    conn.commit()
+
+
+def load_sessions() -> list[tuple[str, str, dict[str, str], float]]:
+    """Recharge les sessions persistées ; ignore silencieusement celles illisibles
+    (clé secrète tournée entre-temps, corruption)."""
+    conn = _connect()
+    rows = conn.execute("SELECT sid, username, encrypted_cookies, created_at FROM sessions").fetchall()
+    fernet = _get_fernet()
+    restored = []
+    for sid, username, encrypted_cookies, created_at in rows:
+        try:
+            cookies = json.loads(fernet.decrypt(encrypted_cookies.encode()).decode())
+        except (InvalidToken, ValueError):
+            conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+            conn.commit()
+            continue
+        restored.append((sid, username, cookies, created_at))
+    return restored
 
 
 def list_remember_sessions(username: str) -> list[dict]:

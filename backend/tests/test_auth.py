@@ -3,13 +3,15 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
+import requests
+
 from app.cas_client import ScodocSession
 from app.errors import InvalidCredentials
 
 
 def _fake_scodoc_session():
     session = ScodocSession.__new__(ScodocSession)
-    session.session = None
+    session.session = requests.Session()
     session.bootstrap_data = {"semestres": []}
     session.premiere_connexion = lambda: {"semestres": []}
     session.releve_etudiant = lambda sid: {}

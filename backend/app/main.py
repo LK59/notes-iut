@@ -35,7 +35,7 @@ from .errors import (
 )
 from .ratelimit import check_rate_limit, MAX_ATTEMPTS_USER
 from .scodoc_payloads import validate_premiere_connexion_payload, validate_releve_payload
-from .sessions import UserSession, create_session, delete_session, get_session, session_stats
+from .sessions import UserSession, create_session, delete_session, get_session, restore_sessions, session_stats
 
 
 # ── Push notifications : polling en arrière-plan ──────────────────────────────
@@ -257,6 +257,7 @@ async def _push_polling_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    restore_sessions()
     task = asyncio.create_task(_push_polling_loop())
     yield
     task.cancel()
