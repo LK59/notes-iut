@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from . import cache
 from .build_info import APP_BUILD_ID as GENERATED_APP_BUILD_ID
 from .cas_client import login as cas_login
-from .cas_client import CAS_BASE, SITE_BASE
+from .cas_client import CAS_BASE, SITE_BASE, DEFAULT_HEADERS, ScodocSession
 from .errors import (
     AppError,
     RememberTokenDecryptError,
@@ -148,6 +148,29 @@ def _push_backoff_delay(username: str) -> int:
     return min(PUSH_BACKOFF_MAX_SECONDS, PUSH_POLL_INTERVAL * (2 ** min(failures, 6)))
 
 
+def _push_scodoc_session_and_bootstrap(username: str, password: str) -> tuple[ScodocSession, dict]:
+    """Réutilise la session ScoDoc persistée du dernier poll plutôt que de refaire un login
+    CAS complet à chaque cycle (voir save_push_session). Retombe sur un login complet si la
+    session réutilisée est rejetée (cookie expiré côté CAS) ou absente."""
+    cookies = cache.get_push_session(username)
+    if cookies:
+        http_session = requests.Session()
+        http_session.headers.update(DEFAULT_HEADERS)
+        http_session.cookies.update(cookies)
+        scodoc = ScodocSession(session=http_session)
+        try:
+            bootstrap = validate_premiere_connexion_payload(scodoc.premiere_connexion())
+            cache.save_push_session(username, http_session.cookies.get_dict())
+            return scodoc, bootstrap
+        except ScodocSessionRejected:
+            pass
+
+    scodoc = cas_login(username, password)
+    bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
+    cache.save_push_session(username, scodoc.session.cookies.get_dict())
+    return scodoc, bootstrap
+
+
 def _push_poll_user(username: str) -> None:
     state = cache.get_push_poll_state(username)
     next_retry_at = state.get("next_retry_at")
@@ -165,8 +188,7 @@ def _push_poll_user(username: str) -> None:
     _username, password = creds
     semestre_id: str | None = None
     try:
-        scodoc = cas_login(_username, password)
-        bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
+        scodoc, bootstrap = _push_scodoc_session_and_bootstrap(_username, password)
         semestres = bootstrap.get("semestres", [])
         if not semestres:
             cache.mark_push_poll_success(_username, None, 0, False)

@@ -224,6 +224,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS push_sessions (
+            username TEXT NOT NULL PRIMARY KEY,
+            encrypted_cookies TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
 
 
 def _connect() -> sqlite3.Connection:
@@ -644,6 +653,42 @@ def load_sessions() -> list[tuple[str, str, dict[str, str], float]]:
             continue
         restored.append((sid, username, cookies, created_at))
     return restored
+
+
+# ── Session ScoDoc réutilisée par le polling push ───────────────────────────
+# Évite de refaire un login CAS complet (3 sauts réseau, avec le mot de passe) à
+# chaque cycle de polling : un login CAS répété toutes les 10 min par abonné,
+# depuis la seule IP du serveur, ressemble à du bourrage d'identifiants côté CAS.
+
+def save_push_session(username: str, cookies: dict[str, str]) -> None:
+    encrypted = _get_fernet().encrypt(json.dumps(cookies).encode()).decode()
+    conn = _connect()
+    conn.execute(
+        "INSERT OR REPLACE INTO push_sessions (username, encrypted_cookies, updated_at) VALUES (?, ?, ?)",
+        (username, encrypted, time.time()),
+    )
+    conn.commit()
+
+
+def get_push_session(username: str) -> dict[str, str] | None:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT encrypted_cookies FROM push_sessions WHERE username = ?", (username,)
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(_get_fernet().decrypt(row[0].encode()).decode())
+    except (InvalidToken, ValueError):
+        conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
+        conn.commit()
+        return None
+
+
+def delete_push_session(username: str) -> None:
+    conn = _connect()
+    conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
+    conn.commit()
 
 
 def list_remember_sessions(username: str) -> list[dict]:
