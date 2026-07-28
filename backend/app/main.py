@@ -255,16 +255,34 @@ async def _push_polling_loop() -> None:
         await asyncio.sleep(PUSH_POLL_INTERVAL)
 
 
+LOGIN_JOBS_CLEANUP_INTERVAL_SECONDS = 60
+
+
+async def _login_jobs_cleanup_loop() -> None:
+    """_cleanup_login_jobs() n'était sinon appelé que lors d'un nouveau /api/login ou
+    /api/refresh : un job terminé mais jamais repollé (onglet fermé en plein login,
+    par ex.) restait donc en mémoire indéfiniment en période creuse."""
+    while True:
+        await asyncio.sleep(LOGIN_JOBS_CLEANUP_INTERVAL_SECONDS)
+        try:
+            _cleanup_login_jobs()
+        except Exception:
+            logger.exception("Erreur nettoyage périodique des login jobs")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     restore_sessions()
-    task = asyncio.create_task(_push_polling_loop())
+    push_task = asyncio.create_task(_push_polling_loop())
+    cleanup_task = asyncio.create_task(_login_jobs_cleanup_loop())
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for task in (push_task, cleanup_task):
+        task.cancel()
+    for task in (push_task, cleanup_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 class _BrotliMiddleware:
