@@ -22,6 +22,7 @@ VAPID_KEYS_PATH = DB_PATH.parent / "vapid.keys"
 REMEMBER_KEY_ROTATION_SECONDS = 7 * 24 * 3600
 REMEMBER_IDLE_TTL = 7 * 24 * 3600
 MAX_REMEMBER_TOKENS_PER_USER = 6
+REMEMBER_EVENTS_RETENTION_SECONDS = 90 * 24 * 3600
 
 # ── Clé secrète ──────────────────────────────────────────────────────────────
 
@@ -820,6 +821,19 @@ def purge_expired_remember_tokens() -> None:
     conn = _connect()
     try:
         conn.execute("DELETE FROM remember_tokens WHERE expires_at < ?", (time.time(),))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def purge_old_remember_events(retention_seconds: int = REMEMBER_EVENTS_RETENTION_SECONDS) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM remember_events WHERE created_at < ?",
+            (time.time() - retention_seconds,),
+        )
         conn.commit()
     except Exception:
         conn.rollback()

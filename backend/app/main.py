@@ -28,6 +28,7 @@ from .cas_client import login as cas_login
 from .cas_client import CAS_BASE, SITE_BASE, DEFAULT_HEADERS, ScodocSession
 from .errors import (
     AppError,
+    InvalidCredentials,
     RememberTokenDecryptError,
     RememberTokenInvalid,
     RememberTokenMissing,
@@ -314,6 +315,20 @@ def _push_poll_user(username: str) -> None:
             notifications_sent=sent,
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
+    except InvalidCredentials:
+        deleted = cache.delete_all_remember_sessions(_username)
+        cache.mark_push_poll_error(_username, "invalid_credentials_revoked", 0)
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "push.poll.invalid_credentials_revoked",
+                    "username_hash": _safe_hash(_username),
+                    "tokens_deleted": deleted,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
     except Exception:
         delay = _push_backoff_delay(_username)
         cache.mark_push_poll_error(_username, "scodoc_or_poll_error", delay)
@@ -402,6 +417,14 @@ async def _login_jobs_cleanup_loop() -> None:
             _cleanup_login_jobs()
         except Exception:
             logger.exception("Erreur nettoyage périodique des login jobs")
+        try:
+            cache.purge_expired_remember_tokens()
+        except Exception:
+            logger.exception("Erreur purge des remember-tokens expirés")
+        try:
+            cache.purge_old_remember_events()
+        except Exception:
+            logger.exception("Erreur purge des remember-events périmés")
 
 
 @asynccontextmanager
@@ -828,6 +851,10 @@ def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, 
         sid = create_session(username, scodoc)
         _log_event("auth.refresh.ok", username_hash=_safe_hash(username))
         result = {"status": "ok", "sid": sid, "remember_token": new_token, "username": username}
+    except InvalidCredentials as exc:
+        cache.delete_remember_token(old_token, user_agent, client_ip)
+        _log_event("auth.refresh.invalid_credentials_revoked", username_hash=_safe_hash(username))
+        result = {"status": "error", "error": exc}
     except Exception as exc:
         result = {"status": "error", "error": exc}
     with _login_jobs_lock:
@@ -883,6 +910,8 @@ def api_refresh_status(job_id: str, response: Response):
     if job["status"] == "pending":
         return {"status": "pending", "stage": job.get("stage")}
     if job["status"] == "error":
+        if isinstance(job["error"], InvalidCredentials):
+            response.delete_cookie(COOKIE_REMEMBER, path="/")
         raise job["error"]
 
     _set_sid_cookie(response, job["sid"])
