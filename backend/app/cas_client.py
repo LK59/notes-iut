@@ -209,11 +209,13 @@ def login(username: str, password: str, on_stage: "Callable[[str], None] | None"
         message = _extract_cas_error(resp.text)
         if message.startswith("Échec de l'authentification CAS"):
             title = BeautifulSoup(resp.text, "html.parser").title
+            set_cookie = resp.headers.get("Set-Cookie")
+            cookie_names = [c.split("=", 1)[0] for c in set_cookie.split(",")] if set_cookie else None
             logger.warning(
-                "Réponse CAS non reconnue : status=%s title=%r set-cookie=%r body[:1500]=%r",
+                "Réponse CAS non reconnue : status=%s title=%r set-cookie-names=%r body[:1500]=%r",
                 resp.status_code,
                 title.get_text(strip=True) if title else None,
-                resp.headers.get("Set-Cookie"),
+                cookie_names,
                 resp.text[:1500],
             )
             raise CasUnexpectedResponse(message)
