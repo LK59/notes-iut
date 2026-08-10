@@ -1,19 +1,15 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
+import { Suspense, lazy, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   clearServerCache,
-  getReleve,
-  getSemestres,
   logout,
   reconnectNow,
   setCacheFallbackHandler,
   type CacheFallbackReason,
   type ReauthWarning,
 } from "../api";
-import { cacheGet, cacheSet, clearDataCache } from "../offlineCache";
-import type { AbsencesByDate, Releve, ReleveResponse, Semestre } from "../types";
-import { moyenneGenerale, newlyPublishedIds, numericNoteValue, pendingItems, semesterMoyenne, ueMoyenne } from "../simulator";
-import type { SemestrePoint } from "./EvolutionChart";
+import { clearDataCache } from "../offlineCache";
+import { semestreLabel } from "../semestreLabel";
 import UeTable from "./UeTable";
 import SemestreSummary from "./SemestreSummary";
 import PendingNotes from "./PendingNotes";
@@ -30,52 +26,15 @@ import ViewToggle from "./ViewToggle";
 import MatieresRecap from "./MatieresRecap";
 import { useViewMode } from "../viewMode";
 import { useOnline } from "../useOnline";
-import { getGradeHistory, recordGradeHistory, type GradeHistoryItem } from "../gradeHistory";
 import GradeHistoryPanel from "./GradeHistoryPanel";
 import { APP_VERSION, BUILD_ID } from "../version";
+import { useReleveData } from "../hooks/useReleveData";
+import { useSimulation } from "../hooks/useSimulation";
+import { usePrintExport } from "../hooks/usePrintExport";
 // Ces composants ne s'ouvrent que sur clic — on les charge à la demande.
 const GraphiquesView = lazy(() => import("./GraphiquesView"));
 const SessionsPanel = lazy(() => import("./SessionsPanel"));
 const AdminPanel = lazy(() => import("./AdminPanel"));
-
-const SIM_PREFIX = "notes-iut-sim:";
-
-interface ReleveResult {
-  releve: Releve;
-  absences: AbsencesByDate | undefined;
-  previous: Releve | null;
-}
-
-async function fetchReleve(semestreId: string, refresh = false): Promise<ReleveResult> {
-  // Capture la valeur précédente AVANT que withOfflineFallback l'écrase dans le cache localStorage.
-  const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`)?.relevé ?? null;
-  const data = await getReleve(semestreId, refresh);
-  return { releve: data.relevé, absences: data.absences, previous };
-}
-
-function semestreLabel(s: Semestre): string {
-  const num = s.semestre_id ? `S${s.semestre_id}` : "";
-  const annee = s.annee_scolaire ? `(${s.annee_scolaire})` : "";
-  return [s.titre, num, annee].filter(Boolean).join(" ");
-}
-
-function loadSimulation(semestreId: string): Record<string, number> {
-  try {
-    const raw = localStorage.getItem(SIM_PREFIX + semestreId);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveSimulation(semestreId: string, overrides: Record<string, number>) {
-  try {
-    localStorage.setItem(SIM_PREFIX + semestreId, JSON.stringify(overrides));
-  } catch {
-    // best effort — la simulation reste fonctionnelle même si le stockage échoue
-  }
-}
-
 
 export default function Dashboard({
   username,
@@ -91,15 +50,6 @@ export default function Dashboard({
   onLoggedOut: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [semestreId, setSemestreId] = useState<string | null>(null);
-  const [gradeHistory, setGradeHistory] = useState<GradeHistoryItem[]>([]);
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const [resetting, setResetting] = useState(false);
-  const [confirmingReset, setConfirmingReset] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [printMode, setPrintMode] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -126,236 +76,43 @@ export default function Dashboard({
     }
   }
 
-  // ── Bootstrap ──────────────────────────────────────────────────────────────
-  const { data: bootstrap, isLoading, error: bootstrapError } = useQuery({
-    queryKey: ["semestres"],
-    queryFn: getSemestres,
-  });
+  const {
+    bootstrap,
+    isLoading,
+    bootstrapError,
+    semestreId,
+    setSemestreId,
+    releve,
+    absences,
+    newIds,
+    trend,
+    evolution,
+    allReleves,
+    gradeHistory,
+    refreshing,
+    refreshError,
+    setRefreshError,
+    refreshCurrent,
+    fetchAndCacheCurrent,
+  } = useReleveData(view);
 
-  // Initialise semestreId et pré-alimente le cache React Query avec le relevé inclus dans
-  // la réponse bootstrap pour éviter un second appel réseau sur le semestre courant.
-  useEffect(() => {
-    if (!bootstrap) return;
-    if (!semestreId) {
-      setSemestreId(bootstrap.semestres[bootstrap.semestres.length - 1]?.formsemestre_id ?? null);
-    }
-    if (bootstrap.relevé && bootstrap.semestres.length > 0) {
-      const sid = bootstrap.semestres[bootstrap.semestres.length - 1].formsemestre_id;
-      if (!queryClient.getQueryData(["releve", sid])) {
-        const previous = cacheGet<ReleveResponse>(`releve:${sid}`)?.relevé ?? null;
-        queryClient.setQueryData<ReleveResult>(["releve", sid], {
-          releve: bootstrap.relevé,
-          absences: bootstrap.absences,
-          previous,
-        });
-        cacheSet(`releve:${sid}`, { relevé: bootstrap.relevé, absences: bootstrap.absences });
-      }
-    }
-  }, [bootstrap]);
+  const {
+    overrides,
+    selectedKey,
+    setSelectedKey,
+    ueMoyennes,
+    moyenneSimulee,
+    pending,
+    hasSimulation,
+    resetting,
+    confirmingReset,
+    setConfirmingReset,
+    handleOverrideChange,
+    handleApplyMany,
+    handleReset,
+  } = useSimulation(semestreId, releve, fetchAndCacheCurrent, setRefreshError);
 
-  // ── Relevé du semestre courant ─────────────────────────────────────────────
-  const { data: currentResult } = useQuery({
-    queryKey: ["releve", semestreId],
-    queryFn: () => fetchReleve(semestreId!),
-    enabled: !!semestreId,
-  });
-
-  const releve = currentResult?.releve ?? null;
-  const absences = currentResult?.absences;
-
-  // ── Semestre précédent (tendance uniquement) ──────────────────────────────
-  const prevSemestreId = useMemo(() => {
-    if (!bootstrap || !semestreId) return null;
-    const idx = bootstrap.semestres.findIndex((s) => s.formsemestre_id === semestreId);
-    return idx > 0 ? bootstrap.semestres[idx - 1].formsemestre_id : null;
-  }, [bootstrap, semestreId]);
-
-  const { data: prevResult } = useQuery({
-    queryKey: ["releve", prevSemestreId],
-    queryFn: () => fetchReleve(prevSemestreId!),
-    enabled: !!prevSemestreId,
-  });
-
-  // ── Relevés de tous les semestres (vue Graphiques seulement) ──────────────
-  // useQueries partage le même cache que useQuery ci-dessus : React Query déduplique
-  // automatiquement les fetches concurrents sur le même semestre.
-  const evolutionQueries = useQueries({
-    queries: (bootstrap?.semestres ?? []).map((s) => ({
-      queryKey: ["releve", s.formsemestre_id],
-      queryFn: () => fetchReleve(s.formsemestre_id),
-      enabled: view === "graphiques",
-    })),
-  });
-
-  const allReleves = useMemo(() => {
-    const result: Record<string, Releve> = {};
-    evolutionQueries.forEach((q, idx) => {
-      const s = bootstrap?.semestres[idx];
-      if (q.data && s) result[s.formsemestre_id] = q.data.releve;
-    });
-    return result;
-  }, [evolutionQueries, bootstrap]);
-
-  const evolution = useMemo<SemestrePoint[]>(() => {
-    return (bootstrap?.semestres ?? []).map((s, idx) => ({
-      titre: semestreLabel(s),
-      moyenne: evolutionQueries[idx]?.data?.releve
-        ? numericNoteValue(evolutionQueries[idx].data!.releve.semestre.notes?.value)
-        : null,
-    }));
-  }, [evolutionQueries, bootstrap]);
-
-  // ── Simulation ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!semestreId) return;
-    setOverrides(loadSimulation(semestreId));
-    setSelectedKey(null);
-    setConfirmingReset(false);
-    setGradeHistory(getGradeHistory(semestreId));
-  }, [semestreId]);
-
-  useEffect(() => {
-    if (!semestreId) return;
-    saveSimulation(semestreId, overrides);
-  }, [semestreId, overrides]);
-
-  // ── Nouvelles notes et historique ─────────────────────────────────────────
-  const newIds = useMemo(() => {
-    if (!releve || !currentResult?.previous) return new Set<number>();
-    return newlyPublishedIds(currentResult.previous, releve);
-  }, [releve, currentResult?.previous]);
-
-  useEffect(() => {
-    if (!releve || !semestreId) return;
-    const history = recordGradeHistory(semestreId, currentResult?.previous ?? null, releve);
-    setGradeHistory(history);
-  }, [releve, semestreId]);
-
-  // ── Tendance vs semestre précédent ─────────────────────────────────────────
-  const trend = useMemo(() => {
-    if (!releve || !prevResult?.releve) return null;
-    const cur = semesterMoyenne(releve);
-    const prev = semesterMoyenne(prevResult.releve);
-    if (cur === null || prev === null) return null;
-    return cur - prev;
-  }, [releve, prevResult]);
-
-  // Export PDF : on force tout en ouvert et en thème clair pour le rendu imprimé (les classes
-  // dark: de Tailwind dépendent de la classe .dark sur <html>, pas du media query print), puis
-  // on imprime — la boîte de dialogue "Enregistrer en PDF" du navigateur fait le reste. La
-  // restauration du thème se fait sur "afterprint" plutôt que juste après print() : sur Chrome,
-  // print() rend la prévisualisation de façon asynchrone, donc restaurer trop tôt la ferait dark.
-  const wasDarkRef = useRef(false);
-  useEffect(() => {
-    if (!printMode) return;
-    wasDarkRef.current = document.documentElement.classList.contains("dark");
-    document.documentElement.classList.remove("dark");
-    const id = requestAnimationFrame(() => window.print());
-    return () => cancelAnimationFrame(id);
-  }, [printMode]);
-
-  useEffect(() => {
-    const handleAfterPrint = () => {
-      if (wasDarkRef.current) document.documentElement.classList.add("dark");
-      setPrintMode(false);
-    };
-    window.addEventListener("afterprint", handleAfterPrint);
-    return () => window.removeEventListener("afterprint", handleAfterPrint);
-  }, []);
-
-  const hasSimulation = Object.keys(overrides).length > 0;
-
-  // L'état "confirmation demandée" ne doit pas rester actif indéfiniment ni survivre à un
-  // changement de semestre — sinon un clic accidentel plus tard pourrait effacer la simulation
-  // sans qu'on s'en rende compte.
-  useEffect(() => {
-    if (!confirmingReset) return;
-    const id = setTimeout(() => setConfirmingReset(false), 4000);
-    return () => clearTimeout(id);
-  }, [confirmingReset]);
-
-  useEffect(() => {
-    setConfirmingReset(false);
-  }, [semestreId]);
-
-  // Badge de notification sur l'icône de l'app installée (API Badging — iOS 16.4+, Chrome)
-  useEffect(() => {
-    if (!("setAppBadge" in navigator)) return;
-    const nav = navigator as Navigator & {
-      setAppBadge(n?: number): Promise<void>;
-      clearAppBadge(): Promise<void>;
-    };
-    if (newIds.size > 0) {
-      nav.setAppBadge(newIds.size).catch(() => {});
-    } else {
-      nav.clearAppBadge().catch(() => {});
-    }
-    return () => { nav.clearAppBadge?.().catch(() => {}); };
-  }, [newIds]);
-
-  const ueMoyennes = useMemo(() => {
-    if (!releve) return {};
-    const result: Record<string, number | null> = {};
-    for (const [code, ue] of Object.entries(releve.ues)) {
-      result[code] = ueMoyenne(ue, releve, overrides);
-    }
-    return result;
-  }, [releve, overrides]);
-
-  const moyenneSimulee = useMemo(() => (releve ? moyenneGenerale(releve.ues, ueMoyennes) : null), [releve, ueMoyennes]);
-  const pending = useMemo(() => (releve ? pendingItems(releve) : []), [releve]);
-
-  function handleOverrideChange(key: string, value: number | undefined) {
-    setOverrides((prev) => {
-      const next = { ...prev };
-      if (value === undefined) delete next[key];
-      else next[key] = value;
-      return next;
-    });
-  }
-
-  function handleApplyMany(keys: string[], value: number) {
-    setOverrides((prev) => {
-      const next = { ...prev };
-      for (const k of keys) next[k] = value;
-      return next;
-    });
-  }
-
-  async function handleRefresh() {
-    if (!semestreId || refreshing) return;
-    setRefreshing(true);
-    setRefreshError(null);
-    try {
-      const result = await fetchReleve(semestreId, true);
-      queryClient.setQueryData<ReleveResult>(["releve", semestreId], result);
-    } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  async function handleReset() {
-    if (!semestreId) return;
-    if (!confirmingReset) {
-      setConfirmingReset(true);
-      return;
-    }
-    setConfirmingReset(false);
-    setOverrides({});
-    setSelectedKey(null);
-    setResetting(true);
-    setRefreshError(null);
-    try {
-      const result = await fetchReleve(semestreId, true);
-      queryClient.setQueryData<ReleveResult>(["releve", semestreId], result);
-    } catch (err) {
-      setRefreshError(err instanceof Error ? err.message : "Erreur lors du rechargement");
-    } finally {
-      setResetting(false);
-    }
-  }
+  const { printMode, setPrintMode } = usePrintExport();
 
   if (isLoading) return <Centered>Chargement de tes relevés…</Centered>;
   if (bootstrapError) return <DashboardError message={(bootstrapError as Error).message} onLoggedOut={onLoggedOut} />;
@@ -399,7 +156,7 @@ export default function Dashboard({
             Notes IUT Annecy — {username}
           </h1>
           <button
-            onClick={handleRefresh}
+            onClick={refreshCurrent}
             disabled={refreshing}
             aria-label="Rafraîchir les données"
             title="Rafraîchir les données"
