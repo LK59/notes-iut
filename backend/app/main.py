@@ -17,12 +17,27 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-from pydantic import BaseModel, Field
 
 from . import cache
 from .build_info import APP_BUILD_ID as GENERATED_APP_BUILD_ID
 from .cas_client import login as cas_login
 from .cas_client import CAS_BASE, SITE_BASE, DEFAULT_HEADERS, ScodocSession
+from .deps import (
+    COOKIE_REMEMBER,
+    COOKIE_SID,
+    LoginPayload,
+    PushPreferencesPayload,
+    PushSubscribePayload,
+    REMEMBER_MAX_AGE,
+    _admin_usernames,
+    _client_ip,
+    _is_admin_username,
+    _require_admin,
+    _require_session,
+    _set_remember_cookie,
+    _set_sid_cookie,
+    _user_agent,
+)
 from .errors import (
     AppError,
     InvalidCredentials,
@@ -158,38 +173,9 @@ app = FastAPI(title="Notes IUT Dashboard", lifespan=lifespan)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(_BrotliMiddleware, minimum_size=400, quality=4)
 
-COOKIE_SID = "sid"
-COOKIE_REMEMBER = "remember"
-REMEMBER_MAX_AGE = 60 * 60 * 24 * 30  # 30 jours
 FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 APP_VERSION = "0.1.0"
 APP_BUILD_ID = os.environ.get("APP_BUILD_ID", GENERATED_APP_BUILD_ID)
-
-
-class LoginPayload(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
-    password: str = Field(min_length=1, max_length=256)
-    remember: bool = False
-
-
-class PushSubscribePayload(BaseModel):
-    endpoint: str = Field(min_length=1, max_length=2048)
-    p256dh: str = Field(min_length=1, max_length=512)
-    auth: str = Field(min_length=1, max_length=256)
-    includeGradeValue: bool = False
-
-
-class PushPreferencesPayload(BaseModel):
-    includeGradeValue: bool = False
-
-
-def _admin_usernames() -> set[str]:
-    raw = os.environ.get("ADMIN_USERNAMES", "")
-    return {item.strip() for item in raw.split(",") if item.strip()}
-
-
-def _is_admin_username(username: str) -> bool:
-    return username in _admin_usernames()
 
 
 @app.exception_handler(AppError)
@@ -261,62 +247,6 @@ async def security_headers(request: Request, call_next):
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "private, no-store"
     return response
-
-
-def _require_session(request: Request) -> UserSession:
-    session = get_session(request.cookies.get(COOKIE_SID))
-    if session is None:
-        raise HTTPException(status_code=401, detail="Non authentifié")
-    return session
-
-
-def _require_admin(request: Request) -> UserSession:
-    session = _require_session(request)
-    if not _is_admin_username(session.username):
-        raise HTTPException(status_code=403, detail="Accès admin refusé")
-    return session
-
-
-def _set_sid_cookie(response: Response, sid: str) -> None:
-    response.set_cookie(
-        COOKIE_SID,
-        sid,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=60 * 60 * 4,
-        path="/",
-    )
-
-
-def _set_remember_cookie(response: Response, token: str) -> None:
-    response.set_cookie(
-        COOKIE_REMEMBER,
-        token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        max_age=REMEMBER_MAX_AGE,
-        path="/",
-    )
-
-
-def _client_ip(request: Request) -> str | None:
-    # X-Real-IP est positionné par nginx à $remote_addr — ne peut pas être forgé par le client.
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip.strip()
-    # X-Forwarded-For : nginx AJOUTE $remote_addr en dernier via proxy_add_x_forwarded_for.
-    # Lire la dernière entrée (ajoutée par le proxy de confiance) et non la première
-    # (qui peut être forgée par le client en envoyant un header X-Forwarded-For arbitraire).
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else None
-
-
-def _user_agent(request: Request) -> str | None:
-    return request.headers.get("User-Agent")
 
 
 # ── Santé ─────────────────────────────────────────────────────────────────────
