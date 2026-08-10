@@ -45,7 +45,7 @@ def test_login_requires_csrf_header(client):
 
 
 def test_login_success_sets_session_cookie(client, api_headers):
-    with patch("app.main.cas_login", return_value=_fake_scodoc_session()):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
         resp = _login(client, api_headers, "toto", "secret")
     assert resp.status_code == 200
     body = resp.json()
@@ -54,21 +54,21 @@ def test_login_success_sets_session_cookie(client, api_headers):
 
 
 def test_login_success_marks_admin(client, api_headers):
-    with patch("app.main.cas_login", return_value=_fake_scodoc_session()):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
         resp = _login(client, api_headers, "adminuser", "secret")
     assert resp.status_code == 200
     assert resp.json()["isAdmin"] is True
 
 
 def test_login_invalid_credentials(client, api_headers):
-    with patch("app.main.cas_login", side_effect=InvalidCredentials()):
+    with patch("app.routes.auth.cas_login", side_effect=InvalidCredentials()):
         resp = _login(client, api_headers, "toto", "wrong")
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "INVALID_CREDENTIALS"
 
 
 def test_login_rate_limited_after_too_many_attempts(client, api_headers):
-    with patch("app.main.cas_login", side_effect=InvalidCredentials()):
+    with patch("app.routes.auth.cas_login", side_effect=InvalidCredentials()):
         for _ in range(10):
             _login(client, api_headers, "flood", "wrong")
         resp = client.post(
@@ -87,7 +87,7 @@ def test_me_unauthenticated(client):
 
 
 def test_me_authenticated_after_login(client, api_headers):
-    with patch("app.main.cas_login", return_value=_fake_scodoc_session()):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
         _login(client, api_headers, "toto", "secret")
     resp = client.get("/api/me")
     assert resp.status_code == 200
@@ -97,7 +97,7 @@ def test_me_authenticated_after_login(client, api_headers):
 
 
 def test_logout_clears_session(client, api_headers):
-    with patch("app.main.cas_login", return_value=_fake_scodoc_session()):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
         _login(client, api_headers, "toto", "secret")
     resp = client.post("/api/logout", headers=api_headers)
     assert resp.status_code == 200
@@ -112,7 +112,7 @@ def test_protected_endpoint_requires_session(client):
 
 
 def test_admin_endpoint_forbidden_for_non_admin(client, api_headers):
-    with patch("app.main.cas_login", return_value=_fake_scodoc_session()):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
         _login(client, api_headers, "toto", "secret")
     resp = client.get("/api/admin/status")
     assert resp.status_code == 403
