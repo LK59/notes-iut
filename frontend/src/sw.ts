@@ -1,8 +1,8 @@
 /// <reference lib="webworker" />
-import { cleanupOutdatedCaches, precacheAndRoute } from "workbox-precaching";
-import { NavigationRoute, registerRoute } from "workbox-routing";
+import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching";
+import { NavigationRoute, registerRoute, setCatchHandler } from "workbox-routing";
 import { ExpirationPlugin } from "workbox-expiration";
-import { NetworkOnly, StaleWhileRevalidate } from "workbox-strategies";
+import { NetworkFirst, NetworkOnly, StaleWhileRevalidate } from "workbox-strategies";
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<{ url: string; revision: string | null } | string>;
@@ -58,10 +58,22 @@ registerRoute(
   new NetworkOnly()
 );
 
-// Navigation SPA : fallback vers index.html si hors-ligne
+// Navigation SPA : réseau en priorité (fraîcheur), repli sur index.html précaché si hors-ligne.
+// NetworkOnly ne faisait aucun repli : un démarrage à froid sans réseau échouait entièrement,
+// avant même que l'app (et son cache offline en JS) ait pu se charger.
 registerRoute(
-  new NavigationRoute(new NetworkOnly(), { denylist: [/^\/api\//] })
+  new NavigationRoute(
+    new NetworkFirst({ cacheName: "app-shell", networkTimeoutSeconds: 3, plugins: [cacheOnlyOk] }),
+    { denylist: [/^\/api\//] }
+  )
 );
+
+setCatchHandler(async ({ event }) => {
+  if (event.request.mode === "navigate") {
+    return (await matchPrecache("/index.html")) ?? Response.error();
+  }
+  return Response.error();
+});
 
 // ── Push notifications ──────────────────────────────────────────────────────
 

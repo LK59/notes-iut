@@ -17,6 +17,7 @@ export default function SettingsMenu() {
   const { theme, toggle: toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
 
   const [isSubscribed, setIsSubscribed] = useState(false);
@@ -77,6 +78,21 @@ export default function SettingsMenu() {
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  // Ferme au clavier (Échap) et rend le focus au bouton déclencheur ; déplace le focus
+  // dans le panneau à l'ouverture pour les utilisateurs au clavier/lecteur d'écran.
+  useEffect(() => {
+    if (!open) return;
+    popupRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
   const pushAvailable = isPushSupported();
@@ -142,8 +158,12 @@ export default function SettingsMenu() {
   const popup = open ? (
     <div
       data-settings-popup
+      ref={popupRef}
+      role="dialog"
+      aria-label="Paramètres"
+      tabIndex={-1}
       style={popupStyle}
-      className="z-[9999] bg-white dark:bg-slate-900 border border-sky-200/80 dark:border-slate-700/80 rounded-2xl shadow-2xl shadow-sky-900/10 dark:shadow-black/50 p-4 space-y-4"
+      className="z-[9999] bg-white dark:bg-slate-900 border border-sky-200/80 dark:border-slate-700/80 rounded-2xl shadow-2xl shadow-sky-900/10 dark:shadow-black/50 p-4 space-y-4 focus:outline-none"
     >
       <p className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
         Paramètres
@@ -285,6 +305,8 @@ export default function SettingsMenu() {
         ref={buttonRef}
         onClick={openMenu}
         aria-label="Paramètres"
+        aria-haspopup="dialog"
+        aria-expanded={open}
         title="Paramètres"
         className="relative rounded-md border border-sky-200 dark:border-sky-800 bg-white dark:bg-slate-800 px-2.5 py-1.5 text-sm text-sky-700 dark:text-sky-200 hover:bg-sky-50 dark:hover:bg-slate-700 flex items-center gap-1.5"
       >

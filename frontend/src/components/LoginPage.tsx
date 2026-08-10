@@ -106,7 +106,11 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
             {stage ? LOGIN_STAGE_LABELS[stage] ?? "Connexion en cours..." : "Connexion en cours..."}
           </p>
         )}
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {error && (
+          <p role="alert" aria-live="assertive" className="text-sm text-red-600 dark:text-red-400">
+            {error}
+          </p>
+        )}
         <button
           type="submit"
           disabled={loading}

@@ -9,6 +9,7 @@ interface Props {
 export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
 
   useEffect(() => {
@@ -20,6 +21,21 @@ export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
     };
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open]);
+
+  // Ferme au clavier (Échap) et rend le focus au bouton déclencheur ; déplace le focus
+  // dans le menu à l'ouverture pour les utilisateurs au clavier/lecteur d'écran.
+  useEffect(() => {
+    if (!open) return;
+    popupRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
   function toggleMenu() {
@@ -47,13 +63,18 @@ export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
   const popup = open ? (
     <div
       data-export-popup
+      ref={popupRef}
+      role="menu"
+      aria-label="Export"
+      tabIndex={-1}
       style={popupStyle}
-      className="rounded-lg border border-sky-200/70 dark:border-slate-700/70 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl ring-1 ring-black/5 dark:ring-white/10 shadow-lg overflow-hidden z-[9999]"
+      className="rounded-lg border border-sky-200/70 dark:border-slate-700/70 bg-white/95 dark:bg-slate-800/95 backdrop-blur-xl ring-1 ring-black/5 dark:ring-white/10 shadow-lg overflow-hidden z-[9999] focus:outline-none"
     >
       <a
         href={`/api/bulletin-pdf/${semestreId}?type=BUT`}
         target="_blank"
         rel="noopener noreferrer"
+        role="menuitem"
         onClick={() => setOpen(false)}
         className="block px-3 py-2.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700 border-b border-sky-100 dark:border-slate-700"
       >
@@ -61,6 +82,7 @@ export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
         <span className="block text-xs text-slate-500 dark:text-slate-400">Document PDF généré par ScoDoc</span>
       </a>
       <button
+        role="menuitem"
         onClick={() => {
           setOpen(false);
           onExportSimulation();
@@ -80,6 +102,8 @@ export default function ExportMenu({ semestreId, onExportSimulation }: Props) {
       <button
         ref={buttonRef}
         onClick={toggleMenu}
+        aria-haspopup="menu"
+        aria-expanded={open}
         className="rounded-md border border-sky-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700 whitespace-nowrap flex items-center gap-1.5"
       >
         Export

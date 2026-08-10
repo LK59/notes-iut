@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Sans ceci, le navigateur peut peindre les éléments natifs (popups de <select>,
+   scrollbars, ...) selon le thème du système plutôt que celui choisi dans l'app
+   (classe .dark sur <html>), même quand le reste de la page est en mode clair. */
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
 @media print {
   body {
     background: white !important;

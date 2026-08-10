@@ -6,12 +6,28 @@ const VERSION_KEY = "notes-iut-cache-version";
 // vide au lieu de réutiliser une structure périmée potentiellement incompatible.
 const CURRENT_VERSION = "2";
 
-/** Cache localStorage best-effort : ne doit jamais faire planter l'appelant (quota, mode privé...). */
+function isQuotaExceeded(err: unknown): boolean {
+  return err instanceof DOMException && (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+}
+
+/**
+ * Cache localStorage best-effort : ne doit jamais faire planter l'appelant (quota, mode privé...).
+ * Si le quota est dépassé, on sacrifie les autres entrées en cache (moins utiles que la donnée
+ * qu'on est justement en train d'écrire, typiquement le relevé du semestre consulté) et on
+ * retente une fois, plutôt que d'abandonner silencieusement l'écriture.
+ */
 export function cacheSet(key: string, value: unknown): void {
+  const serialized = JSON.stringify(value);
   try {
-    localStorage.setItem(PREFIX + key, JSON.stringify(value));
-  } catch {
-    // best effort
+    localStorage.setItem(PREFIX + key, serialized);
+  } catch (err) {
+    if (!isQuotaExceeded(err)) return;
+    clearCache([PREFIX]);
+    try {
+      localStorage.setItem(PREFIX + key, serialized);
+    } catch {
+      // best effort : toujours pas de place (mode privé très restreint, quota déjà minimal...)
+    }
   }
 }
 

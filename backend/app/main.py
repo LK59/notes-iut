@@ -866,7 +866,7 @@ def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, 
 @app.post("/api/refresh")
 def api_refresh(request: Request, response: Response):
     """Échange le cookie remember contre une nouvelle session sans ressaisie du mot de passe."""
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request) or "unknown"
     if not check_rate_limit(f"refresh:{client_ip}"):
         _log_event("auth.refresh.rate_limited", ip_hash=_safe_hash(client_ip))
         raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes.")

@@ -58,7 +58,8 @@ export default function App() {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       checkAuth();
-      queryClient.invalidateQueries();
+      queryClient.invalidateQueries({ queryKey: ["semestres"] });
+      queryClient.invalidateQueries({ queryKey: ["releve"] });
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
