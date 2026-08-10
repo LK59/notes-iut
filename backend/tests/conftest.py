@@ -15,13 +15,15 @@ os.environ.setdefault("ADMIN_USERNAMES", "adminuser")
 @pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     """Redirige le cache SQLite vers un fichier temporaire pour chaque test."""
-    from app import cache
+    import threading
+
+    from app.cache import db as cache_db
 
     db_path = tmp_path / "cache.db"
-    monkeypatch.setattr(cache, "DB_PATH", db_path)
-    monkeypatch.setattr(cache, "VAPID_KEYS_PATH", tmp_path / "vapid.keys")
-    monkeypatch.setattr(cache, "_thread_local", cache.threading.local())
-    monkeypatch.setattr(cache, "_db_schema_initialized", False)
+    monkeypatch.setattr(cache_db, "DB_PATH", db_path)
+    monkeypatch.setattr(cache_db, "VAPID_KEYS_PATH", tmp_path / "vapid.keys")
+    monkeypatch.setattr(cache_db, "_thread_local", threading.local())
+    monkeypatch.setattr(cache_db, "_db_schema_initialized", False)
     yield
 
 
