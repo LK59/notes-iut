@@ -1,11 +1,9 @@
 import type { ModuleEntry, Releve, Ue } from "../types";
 
 /**
- * Structure prévisionnelle (UE, modules, coefficients) des semestres 5 et 6 du BUT R&T,
- * reconstituée à partir du relevé d'un étudiant de la promotion précédente. Uniquement les
- * noms et coefficients sont repris — aucune note réelle n'est stockée ici. Ces données sont
- * indicatives : ScoDoc n'a pas encore déclaré ces semestres, les coefficients définitifs
- * peuvent différer une fois les semestres ouverts officiellement.
+ * Structure prévisionnelle (UE, modules, coefficients) des semestres 5 et 6 du BUT R&T.
+ * Ces données sont indicatives : ScoDoc n'a pas encore déclaré ces semestres, les
+ * coefficients définitifs peuvent différer une fois les semestres ouverts officiellement.
  */
 
 export interface PrevisionModule {

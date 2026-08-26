@@ -141,11 +141,10 @@ export default function PreviewApp({ loggedIn }: { loggedIn: boolean }) {
 
       <main className="max-w-3xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
         <p className="text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md p-3">
-          Ces matières et coefficients proviennent du relevé d'un étudiant de la promotion
-          précédente : ils ne sont donnés qu'à titre indicatif et n'ont aucune valeur officielle
-          tant que ScoDoc n'a pas ouvert ce semestre. Les notes saisies ci-dessous sont purement
-          fictives, stockées uniquement sur cet appareil (jamais envoyées à un serveur), et
-          servent juste à te projeter une moyenne.
+          Ces matières et coefficients sont donnés à titre indicatif et n'ont aucune valeur
+          officielle tant que ScoDoc n'a pas ouvert ce semestre. Les notes saisies ci-dessous sont
+          purement fictives, stockées uniquement sur cet appareil (jamais envoyées à un serveur),
+          et servent juste à te projeter une moyenne.
         </p>
         <PrevisionSection semestre={PREVISIONS[semestreKey]} />
       </main>
