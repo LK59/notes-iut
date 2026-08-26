@@ -144,7 +144,7 @@ export default function PreviewApp({ loggedIn }: { loggedIn: boolean }) {
           Ces matières et coefficients sont donnés à titre indicatif et n'ont aucune valeur
           officielle tant que ScoDoc n'a pas ouvert ce semestre. Les notes saisies ci-dessous sont
           purement fictives, stockées uniquement sur cet appareil (jamais envoyées à un serveur),
-          et servent juste à te projeter une moyenne.
+          et servent uniquement à projeter une moyenne.
         </p>
         <PrevisionSection semestre={PREVISIONS[semestreKey]} />
       </main>
