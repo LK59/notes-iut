@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { autoLoginIfRemembered, me, setUnauthorizedHandler, type ReauthWarning } from "./api";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
+import PreviewApp from "./components/PreviewApp";
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -75,6 +76,12 @@ export default function App() {
     });
     return () => setUnauthorizedHandler(null);
   }, [queryClient]);
+
+  // Page publique de prévisions S5/S6 (BUT R&T) : accessible sans être loggé, y compris en
+  // accès direct par URL — donc vérifiée avant tout écran d'authentification/chargement.
+  if (window.location.pathname.startsWith("/preview")) {
+    return <PreviewApp loggedIn={!checking && Boolean(username)} />;
+  }
 
   // En cas de connexion instable, ne jamais rester sur un écran vide indéfiniment : même si
   // le check initial traîne, on affiche un signe de vie plutôt qu'un écran blanc/bleu muet.

@@ -204,6 +204,12 @@ export default function Dashboard({
           {semestreId && <ExportMenu semestreId={semestreId} onExportSimulation={() => setPrintMode(true)} />}
           <SettingsMenu />
           <button
+            onClick={() => (window.location.href = "/preview/s5")}
+            className="text-sm text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-sky-100 whitespace-nowrap"
+          >
+            Prévisions S5/S6
+          </button>
+          <button
             onClick={() => setSessionsOpen(true)}
             className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
           >

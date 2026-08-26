@@ -118,6 +118,11 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: (username: strin
         >
           {loading ? "Connexion..." : "Se connecter"}
         </button>
+        <p className="text-center">
+          <a href="/preview/s5" className="text-xs text-slate-400 dark:text-slate-500 hover:text-sky-700 dark:hover:text-sky-300 underline">
+            Accéder aux prévisions S5/S6 (BUT R&amp;T)
+          </a>
+        </p>
       </form>
     </div>
   );
