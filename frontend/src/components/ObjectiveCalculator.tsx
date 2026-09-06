@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import type { Releve } from "../types";
 import { moyenneGenerale, pendingItems, solveUniformTarget, ueMoyenne } from "../simulator";
-import Collapsible from "./Collapsible";
+import { Button, Panel } from "./ui";
+import { SECTION_LABEL } from "./SectionNav";
 
 interface Props {
   releve: Releve;
@@ -15,106 +16,90 @@ export default function ObjectiveCalculator({ releve, overrides, onApply }: Prop
   const [scope, setScope] = useState(GENERAL);
   const [target, setTarget] = useState(10);
 
-  const ueEntries = useMemo(() => Object.entries(releve.ues).filter(([, ue]) => ue.type !== 1), [releve]);
+  const ueEntries = useMemo(
+    () => Object.entries(releve.ues).filter(([, ue]) => ue.type !== 1),
+    [releve]
+  );
 
   const pendingKeys = useMemo(() => {
     const all = pendingItems(releve);
-    if (scope === GENERAL) return all.map((p) => p.key).filter((k) => !(k in overrides));
-    // Notes en attente appartenant aux modules de l'UE choisie
+    const notYetSimulated = all.map((item) => item.key).filter((key) => !(key in overrides));
+    if (scope === GENERAL) return notYetSimulated;
+
     const ue = releve.ues[scope];
     if (!ue) return [];
+    // Les clés ont la forme `${group}-${moduleCode}-${index}` : on retire le préfixe de
+    // groupe et le suffixe d'index plutôt que de découper sur le premier tiret, pour rester
+    // correct si un code de module en contient un.
     const moduleCodes = new Set([...Object.keys(ue.ressources || {}), ...Object.keys(ue.saes || {})]);
-    return all
-      .map((p) => p.key)
-      .filter((k) => !(k in overrides))
-      .filter((k) => {
-        const moduleCode = k.split("-")[1];
-        return moduleCodes.has(moduleCode);
-      });
+    return notYetSimulated.filter((key) => {
+      const withoutGroup = key.replace(/^(ressources|saes)-/, "");
+      const moduleCode = withoutGroup.slice(0, withoutGroup.lastIndexOf("-"));
+      return moduleCodes.has(moduleCode);
+    });
   }, [releve, overrides, scope]);
 
   const solution = useMemo(() => {
     const evaluate =
       scope === GENERAL
-        ? (o: Record<string, number>) => {
+        ? (candidate: Record<string, number>) => {
             const moyennes: Record<string, number | null> = {};
-            for (const [code, ue] of Object.entries(releve.ues)) moyennes[code] = ueMoyenne(ue, releve, o);
+            for (const [code, ue] of Object.entries(releve.ues)) {
+              moyennes[code] = ueMoyenne(ue, releve, candidate);
+            }
             return moyenneGenerale(releve.ues, moyennes);
           }
-        : (o: Record<string, number>) => ueMoyenne(releve.ues[scope], releve, o);
+        : (candidate: Record<string, number>) => ueMoyenne(releve.ues[scope], releve, candidate);
     return solveUniformTarget(overrides, pendingKeys, target, evaluate);
   }, [releve, overrides, pendingKeys, target, scope]);
 
-  const [open, setOpen] = useState(false);
-
   return (
-    <div className="rounded-xl border border-sky-200/70 dark:border-sky-800/70 bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-sky-50 dark:hover:bg-slate-800/60 rounded-t-xl"
-      >
-        <div>
-          <h2 className="font-semibold text-sky-900 dark:text-sky-100">Simulation d'objectif</h2>
-          <p className="text-xs text-slate-600 dark:text-slate-400">
-            Quelle moyenne te faut-il sur tes évaluations non publiées restantes pour atteindre un objectif ?
-          </p>
-        </div>
-        <Chevron open={open} />
-      </button>
-
-      <Collapsible open={open}>
-      <div className="px-4 pb-4 space-y-3 max-w-full overflow-hidden">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="w-full sm:w-auto min-w-0">
-          <label className="block text-xs text-slate-600 dark:text-slate-400 mb-1">Objectif sur</label>
-          <select
-            value={scope}
-            onChange={(e) => setScope(e.target.value)}
-            className="w-full sm:w-auto sm:max-w-[16rem] truncate rounded-md border border-sky-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 px-3 py-1.5 text-sm"
-          >
-            <option value={GENERAL}>Moyenne générale</option>
-            {ueEntries.map(([code, ue]) => (
-              <option key={code} value={code}>
-                UE {code}
-                {ue.titre ? ` — ${ue.titre}` : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs text-slate-600 dark:text-slate-400 mb-1">Moyenne visée</label>
-          <input
-            type="number"
-            step="0.5"
-            min={0}
-            max={20}
-            value={target}
-            onChange={(e) => setTarget(Number(e.target.value))}
-            className="w-24 rounded border border-sky-300 dark:border-slate-600 dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-2 py-1.5 text-sm"
-          />
-        </div>
-      </div>
-
-      <Result solution={solution} pendingCount={pendingKeys.length} onApply={() => solution.x !== null && onApply(pendingKeys, Math.round(solution.x * 100) / 100)} />
-      </div>
-      </Collapsible>
-    </div>
-  );
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300 transition-transform ${open ? "rotate-180" : ""}`}
-      viewBox="0 0 20 20"
-      fill="currentColor"
+    <Panel
+      title={SECTION_LABEL.objectif}
+      subtitle="Quelle note te faut-il sur les évaluations restantes pour atteindre une moyenne donnée ?"
     >
-      <path
-        fillRule="evenodd"
-        d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z"
-        clipRule="evenodd"
-      />
-    </svg>
+      <div className="p-4 space-y-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-0 flex-1 sm:flex-none">
+            <span className="block text-xs text-muted mb-1">Portée</span>
+            <select
+              value={scope}
+              onChange={(event) => setScope(event.target.value)}
+              className="w-full sm:w-auto sm:max-w-[18rem] rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-fg"
+            >
+              <option value={GENERAL}>Moyenne générale</option>
+              {ueEntries.map(([code, ue]) => (
+                <option key={code} value={code}>
+                  {code}
+                  {ue.titre ? ` — ${ue.titre}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="block text-xs text-muted mb-1">Objectif</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.5"
+              min={0}
+              max={20}
+              value={target}
+              onChange={(event) => setTarget(Number(event.target.value))}
+              className="w-24 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-sm text-fg mono"
+            />
+          </label>
+        </div>
+
+        <Result
+          solution={solution}
+          pendingCount={pendingKeys.length}
+          onApply={() =>
+            solution.x !== null && onApply(pendingKeys, Math.round(solution.x * 100) / 100)
+          }
+        />
+      </div>
+    </Panel>
   );
 }
 
@@ -129,43 +114,44 @@ function Result({
 }) {
   if (pendingCount === 0) {
     return (
-      <p className="text-sm text-slate-600 dark:text-slate-400">
-        Toutes les évaluations de ce périmètre sont déjà notées (ou déjà simulées) — rien à projeter.
+      <p className="text-sm text-muted">
+        Toutes les évaluations de cette portée sont déjà notées ou simulées — rien à projeter.
       </p>
     );
   }
+
+  const notes = `${pendingCount} note${pendingCount > 1 ? "s" : ""} restante${pendingCount > 1 ? "s" : ""}`;
+
   if (solution.unreachable && solution.atMax !== null && solution.x === 20) {
     return (
-      <p className="text-sm text-red-600 dark:text-red-400">
-        Hors de portée : même avec 20/20 sur les {pendingCount} note(s) restante(s), le maximum atteignable est{" "}
-        {solution.atMax.toFixed(2)}.
+      <p className="text-sm text-neg">
+        Hors de portée : même avec 20/20 sur les {notes}, tu plafonnes à{" "}
+        <span className="mono font-medium">{solution.atMax.toFixed(2)}</span>.
       </p>
     );
   }
+
   if (solution.alreadyMet) {
     return (
-      <p className="text-sm text-emerald-600 dark:text-emerald-400">
-        Objectif déjà acquis : même avec 0 sur les {pendingCount} note(s) restante(s), tu resterais à{" "}
-        {solution.atMin?.toFixed(2)}.
+      <p className="text-sm text-pos">
+        Objectif déjà acquis : même avec 0 sur les {notes}, tu restes à{" "}
+        <span className="mono font-medium">{solution.atMin?.toFixed(2)}</span>.
       </p>
     );
   }
+
   if (solution.x === null) {
-    return <p className="text-sm text-slate-600 dark:text-slate-400">Pas assez de données pour calculer.</p>;
+    return <p className="text-sm text-muted">Pas assez de données pour calculer.</p>;
   }
+
   return (
-    <div className="flex items-center justify-between gap-3 flex-wrap">
-      <p className="text-sm text-slate-700 dark:text-slate-200">
-        Il te faut une moyenne d'environ{" "}
-        <strong className="text-sky-700 dark:text-sky-300">{solution.x.toFixed(2)} / 20</strong> sur chacune des {pendingCount}{" "}
-        note(s) restante(s).
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-inset px-4 py-3">
+      <p className="text-sm text-fg">
+        Il te faut environ{" "}
+        <span className="mono text-lg font-medium text-accent">{solution.x.toFixed(2)}</span> sur
+        chacune des {notes}.
       </p>
-      <button
-        onClick={onApply}
-        className="rounded-md border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/40 px-3 py-1.5 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-slate-700 whitespace-nowrap"
-      >
-        Appliquer aux notes manquantes
-      </button>
+      <Button onClick={onApply}>Appliquer comme simulation</Button>
     </div>
   );
 }

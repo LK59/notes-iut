@@ -1,5 +1,7 @@
-import { useState } from "react";
 import type { AbsencesByDate } from "../types";
+import Chip from "./Chip";
+import { Card, Panel } from "./ui";
+import { SECTION_LABEL } from "./SectionNav";
 
 function formatHeure(h: number): string {
   const heures = Math.floor(h);
@@ -8,24 +10,9 @@ function formatHeure(h: number): string {
 }
 
 function formatDate(iso: string): string {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`h-4 w-4 shrink-0 text-sky-500 dark:text-sky-300 transition-transform ${open ? "rotate-180" : ""}`}
-      viewBox="0 0 20 20"
-      fill="currentColor"
-    >
-      <path
-        fillRule="evenodd"
-        d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+  const date = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 }
 
 interface Props {
@@ -35,12 +22,10 @@ interface Props {
 }
 
 export default function AbsencesPanel({ absences, officialAbsences }: Props) {
-  const [open, setOpen] = useState(false);
-
   const dates = Object.keys(absences || {}).sort((a, b) => (a < b ? 1 : -1)); // plus récent d'abord
-  const total = dates.reduce((sum, d) => sum + (absences?.[d]?.length ?? 0), 0);
+  const total = dates.reduce((sum, date) => sum + (absences?.[date]?.length ?? 0), 0);
   const nonJustifiees = dates.reduce(
-    (sum, d) => sum + (absences?.[d]?.filter((e) => !e.justifie).length ?? 0),
+    (sum, date) => sum + (absences?.[date]?.filter((event) => !event.justifie).length ?? 0),
     0
   );
 
@@ -54,65 +39,54 @@ export default function AbsencesPanel({ absences, officialAbsences }: Props) {
 
   if (total === 0) {
     return (
-      <div className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 p-4 text-sm text-emerald-700 dark:text-emerald-300">
-        Aucune absence enregistrée pour ce semestre.
-      </div>
+      <Card className="border-pos/40 bg-pos-soft/40 px-4 py-3">
+        <p className="text-sm text-pos">Aucune absence enregistrée pour ce semestre.</p>
+      </Card>
     );
   }
 
   return (
-    <div className="rounded-xl border border-sky-200/70 dark:border-sky-800/70 bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-sky-50 dark:hover:bg-slate-800/60 rounded-t-xl"
-      >
-        <div>
-          <h2 className="font-semibold text-sky-900 dark:text-sky-100">
-            Absences — {total} créneau{total > 1 ? "x" : ""}
-            {nonJustifiees > 0 && (
-              <span className="ml-2 text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/50 rounded px-1.5 py-0.5">
-                {nonJustifiees} non justifiée{nonJustifiees > 1 ? "s" : ""}
-              </span>
-            )}
-          </h2>
-          <p className="text-xs text-slate-600 dark:text-slate-400">Détail jour par jour, créneau par créneau.</p>
-          {mismatch && officialAbsences && (
-            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
-              Bulletin officiel : {officialAbsences.injustifie}/{officialAbsences.total} — décompte ScoDoc non
-              synchronisé (erreur de saisie possible côté admin)
+    <Panel
+      title={SECTION_LABEL.absences}
+      subtitle={
+        mismatch && officialAbsences
+          ? `Le bulletin officiel en compte ${officialAbsences.injustifie}/${officialAbsences.total} — décomptes ScoDoc non synchronisés.`
+          : "Détail créneau par créneau."
+      }
+      aside={
+        <span className="flex items-center gap-1.5">
+          {nonJustifiees > 0 && <Chip color="neg">{nonJustifiees} non justifiée{nonJustifiees > 1 ? "s" : ""}</Chip>}
+          <span className="mono text-xs text-muted">{total}</span>
+        </span>
+      }
+    >
+      <div className="divide-y divide-line">
+        {dates.map((date) => (
+          <div key={date} className="px-4 py-2.5">
+            <p className="text-xs font-medium text-muted mb-1.5 first-letter:uppercase">
+              {formatDate(date)}
             </p>
-          )}
-        </div>
-        <Chevron open={open} />
-      </button>
-
-      {open && (
-        <div className="divide-y divide-sky-100 dark:divide-slate-800 pb-2">
-          {dates.map((date) => (
-            <div key={date} className="px-4 py-2">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">{formatDate(date)}</p>
-              <div className="space-y-1">
-                {(absences?.[date] ?? []).map((ev) => (
-                  <div key={ev.idAbs} className="flex items-center justify-between gap-2 text-xs flex-wrap">
-                    <span className="text-slate-600 dark:text-slate-300">
-                      {formatHeure(ev.debut)}–{formatHeure(ev.fin)} · {ev.matiereComplet} · {ev.enseignant}
-                    </span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 font-medium uppercase tracking-wide whitespace-nowrap ${
-                        ev.justifie
-                          ? "bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300"
-                          : "bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300"
-                      }`}
-                    >
-                      {ev.justifie ? "justifiée" : "non justifiée"}
-                    </span>
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-1">
+              {(absences?.[date] ?? []).map((event) => (
+                <div key={event.idAbs} className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[13px] text-fg min-w-0">
+                    <span className="mono text-xs text-subtle">
+                      {formatHeure(event.debut)}–{formatHeure(event.fin)}
+                    </span>{" "}
+                    {event.matiereComplet}
+                    {event.enseignant && (
+                      <span className="text-subtle"> · {event.enseignant}</span>
+                    )}
+                  </span>
+                  <Chip color={event.justifie ? "neutral" : "neg"}>
+                    {event.justifie ? "justifiée" : "non justifiée"}
+                  </Chip>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }

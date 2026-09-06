@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, memo, Suspense, useState } from "react";
 import type { ModuleEntry, Releve, Ue } from "../types";
 import {
   evaluationWeightInModule,
@@ -15,7 +15,8 @@ import {
   ueWeightInGlobal,
 } from "../simulator";
 import Chip from "./Chip";
-import Collapsible from "./Collapsible";
+import { Card, Chevron, Collapsible, Grade, NoteInput } from "./ui";
+import { comparedToClass } from "./SimpleView";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
@@ -32,39 +33,14 @@ interface Props {
   newIds?: Set<number>;
 }
 
-function NewBadge() {
-  return (
-    <span className="text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/50 rounded px-1.5 py-0.5 print:hidden">
-      nouvelle
-    </span>
-  );
-}
-
-function Chevron({ open, className = "" }: { open: boolean; className?: string }) {
-  return (
-    <svg
-      className={`h-4 w-4 shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""} ${className}`}
-      viewBox="0 0 20 20"
-      fill="currentColor"
-    >
-      <path
-        fillRule="evenodd"
-        d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-function SimulatedBadge() {
-  return (
-    <span className="text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/50 rounded px-1.5 py-0.5">
-      simulé
-    </span>
-  );
-}
-
-export default function UeTable({
+/**
+ * Détail complet d'une UE, avec saisie de notes simulées.
+ *
+ * Mémoïsé : chaque caractère tapé dans un champ de note met à jour l'objet `overrides`
+ * au niveau du tableau de bord, ce qui re-rendait sinon toutes les UE de la page à
+ * chaque frappe. Seules les UE dont les props changent réellement sont désormais rendues.
+ */
+function UeTable({
   ueCode,
   ue,
   releve,
@@ -79,17 +55,18 @@ export default function UeTable({
   const [open, setOpen] = useState(defaultOpen);
   const [collapsedModules, setCollapsedModules] = useState<Set<string>>(new Set());
   const isOpen = printMode || open;
-  const ueAgg = ueAggregate(ue, releve, overrides);
-  const ueSimulated = ueIsSimulated(ue, releve, overrides);
+
+  const aggregate = ueAggregate(ue, releve, overrides);
+  const simulated = ueIsSimulated(ue, releve, overrides);
   const rang = ueRang(ue);
-  const decisionUe = releve.semestre.decision_ue?.find((d) => d.acronyme === ueCode);
+  const decision = releve.semestre.decision_ue?.find((d) => d.acronyme === ueCode);
   const ueWeightGlobal = ueWeightInGlobal(ueCode, releve.ues);
   const bonus = toNumber(ue.bonus);
   const malus = toNumber(ue.malus);
 
   function toggleModule(moduleKey: string) {
-    setCollapsedModules((prev) => {
-      const next = new Set(prev);
+    setCollapsedModules((previous) => {
+      const next = new Set(previous);
       if (next.has(moduleKey)) next.delete(moduleKey);
       else next.add(moduleKey);
       return next;
@@ -114,148 +91,134 @@ export default function UeTable({
   ];
 
   return (
-    <div
-      className={`rounded-xl border bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg ring-1 ring-black/5 dark:ring-white/5 shadow-sm ${
-        ueSimulated ? "border-amber-300 dark:border-amber-700 border-l-[3px]" : "border-sky-300/70 dark:border-sky-800/70"
-      }`}
-    >
+    <Card tone={simulated ? "simulated" : "default"}>
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-sky-50 dark:hover:bg-slate-800/60 rounded-t-xl"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={isOpen}
+        className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-left rounded-xl hover:bg-inset transition-colors"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="font-semibold text-sky-950 dark:text-sky-100">
-              {ueCode}
-              {ue.titre ? ` — ${ue.titre}` : ""}
-            </h3>
-            {ueSimulated && <SimulatedBadge />}
+            <h3 className="text-sm font-semibold text-fg">{ueCode}</h3>
+            {simulated && <Chip color="sim">simulé</Chip>}
+            {decision && <Chip color="accent" title="Décision de fin de semestre">{decision.code}</Chip>}
           </div>
-          <div className="flex items-center gap-1 flex-wrap mt-1">
+          {ue.titre && <p className="text-xs text-muted mt-0.5">{ue.titre}</p>}
+          <div className="flex items-center gap-1.5 flex-wrap mt-2">
             {ue.ECTS && (
-              <Chip color="slate" title="ECTS acquis / total">
-                ECTS {ue.ECTS.acquis ?? "-"}/{ue.ECTS.total ?? "-"}
+              <Chip title="ECTS acquis sur total">
+                {ue.ECTS.acquis ?? "-"}/{ue.ECTS.total ?? "-"} ECTS
               </Chip>
             )}
-            <Chip color="slate" title="Moyenne de la classe sur cette UE">
-              Moy. cl. {fmt(ueAgg.moy)}
-            </Chip>
+            <Chip title="Moyenne de la classe sur cette UE">classe {fmt(aggregate.moy)}</Chip>
             {rang && (
-              <Chip color="sky" title="Rang dans la promo pour cette UE">
-                Rang {rang.rang}/{rang.total}
+              <Chip title="Rang dans la promo pour cette UE">
+                rang {rang.rang}/{rang.total}
               </Chip>
             )}
             {ueWeightGlobal !== null && (
-              <Chip color="violet" title="Poids de cette UE dans la moyenne générale">
+              <Chip title="Poids de cette UE dans la moyenne générale">
                 {ueWeightGlobal.toFixed(0)}% gén.
               </Chip>
             )}
-            {bonus !== 0 && (
-              <Chip color="emerald" title="Bonus">
-                Bonus +{bonus}
-              </Chip>
-            )}
-            {malus > 0 && (
-              <Chip color="rose" title="Malus">
-                Malus −{malus}
-              </Chip>
-            )}
-            {decisionUe && (
-              <Chip color="violet" title="Décision de fin de semestre pour cette UE">
-                {decisionUe.code}
-              </Chip>
-            )}
+            {bonus !== 0 && <Chip color="pos" title="Bonus appliqué à l'UE">bonus +{bonus}</Chip>}
+            {malus > 0 && <Chip color="neg" title="Malus appliqué à l'UE">malus −{malus}</Chip>}
           </div>
         </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="text-right">
-            <p className="text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-400">Moyenne UE</p>
-            <p className="text-xl font-bold text-sky-700 dark:text-sky-300">{fmt(ueAgg.value)}</p>
-          </div>
-          <Chevron open={isOpen} className="text-sky-600 dark:text-sky-300 print:hidden" />
+        <div className="flex items-center gap-2 shrink-0">
+          <Grade
+            value={fmt(aggregate.value)}
+            size="lg"
+            simulated={simulated}
+            state={comparedToClass(aggregate.value, aggregate.moy)}
+          />
+          <Chevron open={isOpen} className="text-subtle print:hidden" />
         </div>
       </button>
 
       <Collapsible open={isOpen}>
-        <div className="border-t border-sky-200 dark:border-slate-800 px-4 py-3 space-y-4">
+        <div className="border-t border-line px-3 py-3 space-y-4">
           {moduleGroups.map(
             ({ group, label, entries }) =>
               entries.length > 0 && (
                 <div key={group}>
-                  <h4 className="text-[11px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400 mb-2">
+                  <h4 className="px-1 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">
                     {label}
                   </h4>
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {entries.map(([moduleCode, mod]) => {
                       const summary = (group === "ressources" ? ue.ressources : ue.saes)?.[moduleCode];
                       const modAgg = moduleAggregate(mod, group, moduleCode, overrides);
                       const modSimulated = moduleIsSimulated(mod, group, moduleCode, overrides);
-                      const hasEvaluations = mod.evaluations && mod.evaluations.length > 0;
+                      const hasEvaluations = Boolean(mod.evaluations?.length);
                       const moduleKey = `${group}-${moduleCode}`;
-                      const moduleCollapsed = collapsedModules.has(moduleKey);
-                      const isModuleOpen = printMode || !moduleCollapsed;
+                      const isModuleOpen = printMode || !collapsedModules.has(moduleKey);
                       const modWeightUe = moduleWeightInUe(ue, group, moduleCode);
                       const modWeightGlobal =
-                        modWeightUe !== null && ueWeightGlobal !== null ? (modWeightUe * ueWeightGlobal) / 100 : null;
+                        modWeightUe !== null && ueWeightGlobal !== null
+                          ? (modWeightUe * ueWeightGlobal) / 100
+                          : null;
 
                       return (
                         <div
                           key={moduleCode}
-                          className={`rounded-lg border bg-sky-100/80 dark:bg-slate-800/60 ${
-                            modSimulated
-                              ? "border-amber-300 dark:border-amber-700 border-l-[3px]"
-                              : "border-sky-200 dark:border-slate-700"
+                          className={`rounded-lg border bg-inset/60 ${
+                            modSimulated ? "border-sim/40" : "border-line"
                           }`}
                         >
                           <div
-                            role="button"
-                            tabIndex={0}
+                            role={hasEvaluations ? "button" : undefined}
+                            tabIndex={hasEvaluations ? 0 : undefined}
                             onClick={() => hasEvaluations && toggleModule(moduleKey)}
-                            onKeyDown={(e) => e.key === "Enter" && hasEvaluations && toggleModule(moduleKey)}
-                            className={`flex flex-wrap items-center justify-between gap-1.5 text-sm px-2.5 py-2 ${
-                              hasEvaluations ? "cursor-pointer hover:bg-sky-100 dark:hover:bg-slate-700/60 rounded-t-lg" : ""
+                            onKeyDown={(event) =>
+                              event.key === "Enter" && hasEvaluations && toggleModule(moduleKey)
+                            }
+                            className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-2.5 py-2 ${
+                              hasEvaluations ? "cursor-pointer rounded-t-lg hover:bg-inset" : ""
                             }`}
                           >
-                            <span className="font-medium text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                            <span className="flex items-center gap-1.5 min-w-0 text-[13px] font-medium text-fg">
                               {hasEvaluations && (
-                                <Chevron open={isModuleOpen} className="text-sky-500 dark:text-sky-400 print:hidden" />
+                                <Chevron open={isModuleOpen} className="text-subtle print:hidden" />
                               )}
-                              {moduleCode} — {mod.titre}
-                              {modSimulated && <SimulatedBadge />}
+                              <span className="truncate">{mod.titre || moduleCode}</span>
+                              {modSimulated && <Chip color="sim">simulé</Chip>}
                             </span>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                                Moy. {fmt(modAgg.value)}
-                              </span>
-                              {hasEvaluations && (
-                                <Chip color="slate" title="Moyenne de la classe sur ce module">
-                                  Moy. cl. {fmt(modAgg.moy)}
-                                </Chip>
-                              )}
-                              <Chip color="sky" title="Coefficient de ce module dans l'UE">
-                                Coef {toNumber(summary?.coef, 1).toFixed(1)}
+                            <span className="flex items-center gap-1.5 flex-wrap">
+                              <Chip title="Coefficient dans l'UE">
+                                coef {toNumber(summary?.coef, 1).toFixed(1)}
                               </Chip>
                               {modWeightUe !== null && (
-                                <Chip color="violet" title="Poids dans l'UE puis dans la moyenne générale">
+                                <Chip title="Poids dans l'UE, puis dans la moyenne générale">
                                   {modWeightUe.toFixed(0)}% UE
                                   {modWeightGlobal !== null && ` · ${modWeightGlobal.toFixed(1)}% gén.`}
                                 </Chip>
                               )}
-                            </div>
+                              {hasEvaluations && (
+                                <span className="mono text-[11px] text-subtle">
+                                  classe {fmt(modAgg.moy)}
+                                </span>
+                              )}
+                              <Grade
+                                value={fmt(modAgg.value)}
+                                size="sm"
+                                simulated={modSimulated}
+                                state={comparedToClass(modAgg.value, modAgg.moy)}
+                              />
+                            </span>
                           </div>
 
                           {hasEvaluations ? (
                             <Collapsible open={isModuleOpen}>
-                              <div className="space-y-0.5 px-2 pb-2">
-                                {mod.evaluations!.map((evaluation, idx) => {
-                                  const key = `${group}-${moduleCode}-${idx}`;
+                              <div className="px-1.5 pb-1.5 space-y-0.5">
+                                {mod.evaluations!.map((evaluation, index) => {
+                                  const key = `${group}-${moduleCode}-${index}`;
                                   const overridden = key in overrides;
                                   const realValue = numericNoteValue(evaluation.note.value);
                                   const value = overridden ? overrides[key] : realValue ?? undefined;
                                   const isSelected = selectedKey === key;
                                   const classMoy = numericNoteValue(evaluation.note.moy);
-                                  const belowAverage = value !== undefined && classMoy !== null && value < classMoy;
-                                  const evalWeightModule = evaluationWeightInModule(mod, idx);
+                                  const evalWeightModule = evaluationWeightInModule(mod, index);
                                   const evalWeightGlobal =
                                     evalWeightModule !== null && modWeightUe !== null && ueWeightGlobal !== null
                                       ? (evalWeightModule * modWeightUe * ueWeightGlobal) / 10000
@@ -267,63 +230,54 @@ export default function UeTable({
                                         role="button"
                                         tabIndex={0}
                                         onClick={() => onSelect(isSelected ? null : key)}
-                                        onKeyDown={(e) => e.key === "Enter" && onSelect(isSelected ? null : key)}
-                                        className={`flex flex-wrap items-center justify-between gap-2 rounded-md px-2 py-1.5 cursor-pointer border transition-colors duration-150 ${
-                                          isSelected
-                                            ? "bg-sky-100 dark:bg-sky-900/40 border-sky-300 dark:border-sky-700"
-                                            : belowAverage
-                                              ? "bg-rose-50/70 dark:bg-rose-950/15 border-transparent hover:border-sky-200 dark:hover:border-slate-600"
-                                              : "bg-white dark:bg-slate-900 border-transparent hover:border-sky-200 dark:hover:border-slate-600 hover:bg-sky-50 dark:hover:bg-slate-800"
+                                        onKeyDown={(event) =>
+                                          event.key === "Enter" && onSelect(isSelected ? null : key)
+                                        }
+                                        className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 rounded-lg px-2 py-1.5 cursor-pointer transition-colors ${
+                                          isSelected ? "bg-accent-soft" : "bg-surface hover:bg-inset"
                                         }`}
                                       >
-                                        <div className="flex items-center gap-1.5 min-w-0">
-                                          <Chevron open={isSelected} className="text-sky-500 dark:text-sky-400 print:hidden" />
-                                          <span className="text-sm text-slate-700 dark:text-slate-200">
+                                        <span className="flex items-center gap-1.5 min-w-0">
+                                          <Chevron open={isSelected} className="text-subtle print:hidden" />
+                                          <span className="text-[13px] text-fg truncate">
                                             {evaluation.description || "Évaluation"}
                                           </span>
-                                          {newIds?.has(evaluation.id) && <NewBadge />}
-                                        </div>
-                                        <div className="flex items-center gap-1 flex-wrap">
-                                          <Chip color="slate" title="Min / Moyenne classe / Max">
-                                            Min {fmt(numericNoteValue(evaluation.note.min))} · Moy. cl.{" "}
-                                            {fmt(numericNoteValue(evaluation.note.moy))} · Max{" "}
+                                          {newIds?.has(evaluation.id) && <Chip color="pos">nouveau</Chip>}
+                                        </span>
+                                        <span className="flex items-center gap-1.5 flex-wrap">
+                                          <Chip title="Min · moyenne de classe · max sur la promo">
+                                            {fmt(numericNoteValue(evaluation.note.min))} ·{" "}
+                                            {fmt(classMoy)} ·{" "}
                                             {fmt(numericNoteValue(evaluation.note.max))}
                                           </Chip>
-                                          <Chip color="sky" title="Coefficient de cette évaluation">
-                                            Coef {toNumber(evaluation.coef, 1).toFixed(1)}
+                                          <Chip title="Coefficient de cette évaluation">
+                                            coef {toNumber(evaluation.coef, 1).toFixed(1)}
                                           </Chip>
                                           {evalWeightModule !== null && (
-                                            <Chip color="violet" title="Poids dans le module puis dans la moyenne générale">
+                                            <Chip title="Poids dans le module, puis dans la moyenne générale">
                                               {evalWeightModule.toFixed(0)}% mod.
-                                              {evalWeightGlobal !== null && ` · ${evalWeightGlobal.toFixed(1)}% gén.`}
+                                              {evalWeightGlobal !== null &&
+                                                ` · ${evalWeightGlobal.toFixed(1)}% gén.`}
                                             </Chip>
                                           )}
-                                          <span className="hidden print:inline text-sm font-medium text-slate-900">
+                                          <span className="hidden print:inline mono text-sm">
                                             {value ?? "—"}
                                           </span>
-                                          <input
-                                            type="number"
-                                            step="0.01"
-                                            min={0}
-                                            max={20}
-                                            value={value ?? ""}
-                                            placeholder="à saisir"
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={(e) => {
-                                              const v = e.target.value;
-                                              onChange(key, v === "" ? undefined : Number(v));
-                                            }}
-                                            className={`print:hidden w-20 rounded border px-2 py-1 text-sm text-slate-900 dark:text-slate-100 ${
-                                              overridden
-                                                ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700"
-                                                : "border-sky-300 dark:border-slate-600 dark:bg-slate-800"
-                                            }`}
+                                          <NoteInput
+                                            value={overridden ? overrides[key] : undefined}
+                                            placeholder={realValue === null ? "à venir" : realValue.toFixed(2)}
+                                            ariaLabel={`Note simulée pour ${evaluation.description || "cette évaluation"}`}
+                                            onChange={(next) => onChange(key, next)}
                                           />
-                                        </div>
+                                        </span>
                                       </div>
                                       {isSelected && !printMode && (
-                                        <div className="mt-1 mb-2 px-2">
-                                          <Suspense fallback={<HistogramSkeleton />}>
+                                        <div className="px-2 pt-1.5 pb-2">
+                                          <Suspense
+                                            fallback={
+                                              <div className="h-[132px] rounded-lg bg-inset animate-pulse" />
+                                            }
+                                          >
                                             <PromoHistogram
                                               note={evaluation.note}
                                               ma={overridden ? overrides[key] : undefined}
@@ -338,27 +292,16 @@ export default function UeTable({
                               </div>
                             </Collapsible>
                           ) : (
-                            <div className="flex items-center justify-between text-sm py-1.5 px-2.5 pb-2.5">
-                              <span className="text-slate-600 dark:text-slate-400 italic">Pas encore d'évaluation publiée</span>
-                              <span className="hidden print:inline text-sm font-medium text-slate-900">
+                            <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5 pt-0.5">
+                              <span className="text-xs text-subtle italic">Aucune évaluation publiée</span>
+                              <span className="hidden print:inline mono text-sm">
                                 {overrides[manualKey(group, moduleCode)] ?? "—"}
                               </span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                min={0}
-                                max={20}
-                                value={overrides[manualKey(group, moduleCode)] ?? ""}
+                              <NoteInput
+                                value={overrides[manualKey(group, moduleCode)]}
                                 placeholder="simuler"
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  onChange(manualKey(group, moduleCode), v === "" ? undefined : Number(v));
-                                }}
-                                className={`print:hidden w-20 rounded border px-2 py-1 text-sm text-slate-900 dark:text-slate-100 ${
-                                  manualKey(group, moduleCode) in overrides
-                                    ? "border-amber-400 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700"
-                                    : "border-sky-300 dark:border-slate-600 dark:bg-slate-800"
-                                }`}
+                                ariaLabel={`Note simulée pour le module ${mod.titre || moduleCode}`}
+                                onChange={(next) => onChange(manualKey(group, moduleCode), next)}
                               />
                             </div>
                           )}
@@ -371,16 +314,8 @@ export default function UeTable({
           )}
         </div>
       </Collapsible>
-    </div>
+    </Card>
   );
 }
 
-function HistogramSkeleton() {
-  return (
-    <div className="h-[140px] flex items-end justify-around gap-2 px-2 animate-pulse">
-      {[60, 90, 40, 75].map((h, i) => (
-        <div key={i} className="w-10 rounded-t bg-sky-100 dark:bg-slate-700" style={{ height: `${h}%` }} />
-      ))}
-    </div>
-  );
-}
+export default memo(UeTable);

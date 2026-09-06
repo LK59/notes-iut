@@ -45,10 +45,10 @@ function StatusPill({ value }: { value: unknown }) {
     <span
       className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
         ok
-          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+          ? "bg-pos-soft text-pos"
           : warn
-            ? "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-            : "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+            ? "bg-warn-soft text-warn"
+            : "bg-neg-soft text-neg"
       }`}
     >
       {text}
@@ -58,10 +58,10 @@ function StatusPill({ value }: { value: unknown }) {
 
 function MetricCard({ label, value, hint }: { label: string; value: unknown; hint?: string }) {
   return (
-    <div className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 bg-slate-50 dark:bg-slate-950/30">
-      <p className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100">{fmtValue(value)}</p>
-      {hint && <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{hint}</p>}
+    <div className="rounded-lg border border-line p-3 bg-inset">
+      <p className="text-[11px] uppercase tracking-wide text-subtle">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-fg">{fmtValue(value)}</p>
+      {hint && <p className="mt-0.5 text-xs text-subtle">{hint}</p>}
     </div>
   );
 }
@@ -95,22 +95,22 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
   const serverSessions = asRecord(status?.sessions);
 
   return (
-    <div className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
-      <div className="w-full max-w-5xl rounded-xl border border-sky-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-4 space-y-4">
+    <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
+      <div className="w-full max-w-5xl rounded-xl border border-line bg-surface shadow-pop p-4 space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-sky-950 dark:text-sky-100">Administration</h2>
+          <h2 className="text-sm font-semibold text-fg">Administration</h2>
           <div className="flex items-center gap-2">
-            <button onClick={load} className="text-sm text-sky-700 dark:text-sky-300 hover:underline">Rafraîchir</button>
-            <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">Fermer</button>
+            <button onClick={load} className="text-sm text-accent hover:underline">Rafraîchir</button>
+            <button onClick={onClose} className="text-sm text-muted hover:text-fg">Fermer</button>
           </div>
         </div>
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+        {error && <p className="text-sm text-neg">{error}</p>}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 max-h-[75vh] overflow-y-auto">
-          <section className="lg:col-span-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+          <section className="lg:col-span-2 rounded-lg border border-line p-3">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
               <div>
-                <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200">Statut général</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
+                <h3 className="text-xs font-semibold text-fg">Statut général</h3>
+                <p className="text-xs text-subtle">
                   v{fmtValue(status?.version)} · build {fmtValue(status?.build)}
                 </p>
               </div>
@@ -118,16 +118,16 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {["api", "database", "remember", "cas", "scodoc"].map((key) => (
-                <div key={key} className="rounded-lg border border-slate-100 dark:border-slate-800 p-2">
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 uppercase">{key}</p>
+                <div key={key} className="rounded-lg border border-line p-2">
+                  <p className="text-[11px] text-subtle uppercase">{key}</p>
                   <StatusPill value={checks[key]} />
                 </div>
               ))}
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Remember</h3>
+          <section className="rounded-lg border border-line p-3">
+            <h3 className="text-xs font-semibold text-fg mb-2">Remember</h3>
             <div className="grid grid-cols-2 gap-2">
               <MetricCard label="Tokens actifs" value={remember.active_tokens} />
               <MetricCard label="Events" value={remember.events} />
@@ -138,8 +138,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Cache & config</h3>
+          <section className="rounded-lg border border-line p-3">
+            <h3 className="text-xs font-semibold text-fg mb-2">Cache & config</h3>
             <div className="grid grid-cols-2 gap-2">
               <MetricCard label="Clé" value={config.encryption_key_source} />
               <MetricCard label="Sessions RAM" value={serverSessions.active_sessions} />
@@ -150,8 +150,8 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
-          <section className="lg:col-span-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Push</h3>
+          <section className="lg:col-span-2 rounded-lg border border-line p-3">
+            <h3 className="text-xs font-semibold text-fg mb-2">Push</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
               <MetricCard label="Abonnements" value={push.active_subscriptions} />
               <MetricCard label="Utilisateurs" value={push.subscribed_users} />
@@ -160,22 +160,22 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {pushUsers.slice(0, 20).map((user) => (
-                <div key={String(user.username)} className="text-xs text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-800 rounded p-2">
+                <div key={String(user.username)} className="text-xs text-muted border border-line rounded p-2">
                   <p className="font-medium">{fmtValue(user.username)}</p>
                   <p>Dernier succès : {fmtTime(user.last_success_at as number | undefined)}</p>
                   <p>Prochain essai : {fmtTime(user.next_retry_at as number | undefined)}</p>
                   <p>Nouvelles notes dernier check : {fmtValue(user.last_new_grades_count)}</p>
-                  {Boolean(user.last_error) && <p className="text-red-600 dark:text-red-400">Erreur : {fmtValue(user.last_error)}</p>}
+                  {Boolean(user.last_error) && <p className="text-neg">Erreur : {fmtValue(user.last_error)}</p>}
                 </div>
               ))}
             </div>
           </section>
 
-          <section className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Remember tokens actifs</h3>
+          <section className="rounded-lg border border-line p-3">
+            <h3 className="text-xs font-semibold text-fg mb-2">Remember tokens actifs</h3>
             <div className="space-y-2">
               {sessions.slice(0, 20).map((session) => (
-                <div key={session.session_id} className="text-xs text-slate-600 dark:text-slate-300 border-b border-slate-100 dark:border-slate-800 pb-2">
+                <div key={session.session_id} className="text-xs text-muted border-b border-line pb-2">
                   <p className="font-medium">{session.username}</p>
                   <p>{session.user_agent || "Appareil inconnu"}</p>
                   <p>Dernière utilisation : {fmtTime(session.last_used_at)}</p>
@@ -183,11 +183,11 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </section>
-          <section className="lg:col-span-2 rounded-lg border border-slate-200 dark:border-slate-700 p-3">
-            <h3 className="text-xs font-semibold text-slate-700 dark:text-slate-200 mb-2">Événements remember récents</h3>
+          <section className="lg:col-span-2 rounded-lg border border-line p-3">
+            <h3 className="text-xs font-semibold text-fg mb-2">Événements remember récents</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {events.slice(0, 60).map((event) => (
-                <div key={event.id} className="text-xs text-slate-600 dark:text-slate-300 border border-slate-100 dark:border-slate-800 rounded p-2">
+                <div key={event.id} className="text-xs text-muted border border-line rounded p-2">
                   <p className="font-medium">{event.event} · {event.username}</p>
                   <p>{fmtTime(event.created_at)} · token {event.token_hash_prefix}</p>
                   <p className="truncate">{event.user_agent || "Appareil inconnu"}</p>

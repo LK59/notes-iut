@@ -64,9 +64,9 @@ export default function PrintExport({ releve, overrides, username, semestreTitle
 
   return (
     <div className="hidden print:block text-black text-[11px] leading-snug">
-      <div className="flex items-baseline justify-between border-b-2 border-sky-700 pb-2 mb-3">
+      <div className="flex items-baseline justify-between border-b-2 border-black pb-2 mb-3">
         <div>
-          <p className="text-[10px] uppercase tracking-wide text-sky-700">IUT Annecy</p>
+          <p className="text-[10px] uppercase tracking-wide text-neutral-500">IUT Annecy</p>
           <h1 className="text-xl font-bold">Relevé de notes — {semestreTitle}</h1>
         </div>
         <p className="text-[10px] text-neutral-500 text-right">

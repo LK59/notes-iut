@@ -1,5 +1,6 @@
 import type { Releve } from "../types";
 import { numericNoteValue } from "../simulator";
+import { Card } from "./ui";
 
 // Reprend les libellés du portail (correspondanceCodes) pour la décision de fin d'année.
 const DECISION_ANNEE_LABELS: Record<string, string> = {
@@ -17,6 +18,14 @@ const DECISION_ANNEE_LABELS: Record<string, string> = {
   ABL: "Année blanche",
 };
 
+/**
+ * Résumé du semestre.
+ *
+ * La moyenne générale est traitée comme le seul chiffre principal ; le reste est une
+ * grille compacte à deux colonnes dès le mobile. La version précédente empilait huit
+ * blocs sur une seule colonne — formation et nom de l'étudiant, deux constantes que
+ * l'utilisateur connaît déjà, y occupaient autant de place que la moyenne.
+ */
 export default function SemestreSummary({
   releve,
   trend,
@@ -27,56 +36,134 @@ export default function SemestreSummary({
 }) {
   const notes = releve.semestre.notes;
   const moyenne = numericNoteValue(notes?.value);
+  const rang = releve.semestre.rang;
+  const ects = releve.semestre.ECTS;
+  const absences = releve.semestre.absences;
   const decisionAnnee = releve.semestre.decision_annee?.code;
   const decisionRcue = releve.semestre.decision_rcue ?? [];
-  const hasDecisions = Boolean(decisionAnnee) || decisionRcue.length > 0;
-  const officialTotal = releve.semestre.absences?.total ?? 0;
-  const officialInjustifie = releve.semestre.absences?.injustifie ?? 0;
+  const etudiant = releve.etudiant;
+  const nom = etudiant ? `${etudiant.prenom ?? ""} ${etudiant.nom ?? ""}`.trim() : "";
 
   return (
-    <div className="bg-sky-50/85 dark:bg-slate-900/65 backdrop-blur-lg border border-sky-200/70 dark:border-slate-800/70 ring-1 ring-black/5 dark:ring-white/5 rounded-xl shadow-sm p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-      <Stat
-        label="Moyenne générale"
-        value={moyenne !== null ? moyenne.toFixed(2) : "—"}
-        highlight
-        trend={trend}
-      />
-      <Stat
-        label="Min / Moy. / Max promo"
-        value={`${notes?.min ?? "—"} / ${notes?.moy ?? "—"} / ${notes?.max ?? "—"}`}
-      />
-      <Stat
-        label="Rang"
-        value={releve.semestre.rang ? `${releve.semestre.rang.value} / ${releve.semestre.rang.total}` : "—"}
-      />
-      <Stat
-        label="ECTS"
-        value={releve.semestre.ECTS ? `${releve.semestre.ECTS.acquis ?? "-"} / ${releve.semestre.ECTS.total ?? "-"}` : "—"}
-      />
-      <div>
-        <p className="text-xs text-slate-600 dark:text-slate-400">Absences (1/2 j.)</p>
-        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-          {releve.semestre.absences ? `${officialInjustifie} non justifiées / ${officialTotal} total` : "—"}
-        </p>
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pt-4 pb-3">
+        <div>
+          <p className="text-xs text-muted">Moyenne générale</p>
+          <p className="flex items-baseline gap-2">
+            <span className="mono text-[2.75rem] leading-none font-medium tracking-tight text-fg">
+              {moyenne !== null ? moyenne.toFixed(2) : "—"}
+            </span>
+            <span className="text-sm text-subtle">/ 20</span>
+            {trend !== undefined && trend !== null && Math.abs(trend) >= 0.01 && (
+              <span
+                title={`${trend > 0 ? "+" : ""}${trend.toFixed(2)} point vs le semestre précédent`}
+                className={`mono text-xs font-medium ${trend > 0 ? "text-pos" : "text-neg"}`}
+              >
+                {trend > 0 ? "↑" : "↓"} {Math.abs(trend).toFixed(2)}
+              </span>
+            )}
+          </p>
+        </div>
+
+        {rang && (
+          <div className="text-right">
+            <p className="text-xs text-muted">Rang</p>
+            <p className="mono text-xl text-fg">
+              {rang.value}
+              <span className="text-sm text-subtle"> / {rang.total}</span>
+            </p>
+          </div>
+        )}
       </div>
-      {releve.semestre.situation && <Stat label="Décision" value={releve.semestre.situation} />}
-      {releve.formation?.titre && <Stat label="Formation" value={releve.formation.titre} />}
-      {releve.etudiant && (
-        <Stat label="Étudiant" value={`${releve.etudiant.prenom ?? ""} ${releve.etudiant.nom ?? ""}`.trim()} />
+
+      {/* Repères de promo : une petite échelle vaut mieux que trois nombres alignés. */}
+      {moyenne !== null && notes?.min !== undefined && notes?.max !== undefined && (
+        <PromoScale
+          min={numericNoteValue(notes.min)}
+          moy={numericNoteValue(notes.moy)}
+          max={numericNoteValue(notes.max)}
+          mine={moyenne}
+        />
       )}
 
-      {hasDecisions && (
-        <div className="col-span-full pt-2 border-t border-sky-50 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-x-3 gap-y-1">
+      <dl className="grid grid-cols-2 sm:grid-cols-4 border-t border-line divide-x divide-line">
+        <Stat label="Moy. promo" value={fmtNote(numericNoteValue(notes?.moy))} />
+        <Stat
+          label="ECTS"
+          value={ects ? `${ects.acquis ?? "-"} / ${ects.total ?? "-"}` : "—"}
+        />
+        <Stat
+          label="Absences"
+          value={absences ? `${absences.injustifie} / ${absences.total}` : "—"}
+          hint={absences ? "non justifiées sur total (demi-journées)" : undefined}
+        />
+        <Stat label="Décision" value={releve.semestre.situation || "—"} small />
+      </dl>
+
+      {(decisionAnnee || decisionRcue.length > 0) && (
+        <div className="border-t border-line px-4 py-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
           {decisionAnnee && (
-            <span>Décision annuelle : {DECISION_ANNEE_LABELS[decisionAnnee] ?? decisionAnnee}</span>
+            <span>Décision annuelle — {DECISION_ANNEE_LABELS[decisionAnnee] ?? decisionAnnee}</span>
           )}
-          {decisionRcue.map((c, i) => (
-            <span key={i}>
-              {c.niveau?.competence?.titre ?? "?"} : {c.code}
+          {decisionRcue.map((rcue, index) => (
+            <span key={index}>
+              {rcue.niveau?.competence?.titre ?? "Compétence"} — {rcue.code}
             </span>
           ))}
         </div>
       )}
+
+      {/* Constantes du dossier : présentes pour l'export et la vérification, reléguées
+          en pied de bloc plutôt que traitées comme des indicateurs. */}
+      <div className="border-t border-line bg-inset/50 px-4 py-2 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-subtle">
+        {nom && <span>{nom}</span>}
+        {releve.formation?.titre && (
+          <>
+            {nom && <span aria-hidden="true">·</span>}
+            <span>{releve.formation.titre}</span>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function PromoScale({
+  min,
+  moy,
+  max,
+  mine,
+}: {
+  min: number | null;
+  moy: number | null;
+  max: number | null;
+  mine: number;
+}) {
+  if (min === null || max === null || max <= min) return null;
+  const pct = (value: number) => `${Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100))}%`;
+
+  return (
+    <div className="px-4 pb-4">
+      <div className="relative h-1.5 rounded-full bg-inset">
+        <div className="absolute inset-y-0 left-0 right-0 rounded-full bg-line-strong" />
+        {moy !== null && (
+          <span
+            className="absolute -top-1 h-3.5 w-0.5 -translate-x-1/2 rounded-full bg-muted"
+            style={{ left: pct(moy) }}
+            title={`Moyenne de la promo : ${moy.toFixed(2)}`}
+          />
+        )}
+        <span
+          className="absolute -top-[3px] h-3 w-3 -translate-x-1/2 rounded-full bg-accent ring-2 ring-surface"
+          style={{ left: pct(mine) }}
+          title={`Ta moyenne : ${mine.toFixed(2)}`}
+        />
+      </div>
+      <div className="mt-1 flex justify-between mono text-[11px] text-subtle">
+        <span>{min.toFixed(2)}</span>
+        <span className="text-muted">promo</span>
+        <span>{max.toFixed(2)}</span>
+      </div>
     </div>
   );
 }
@@ -84,34 +171,27 @@ export default function SemestreSummary({
 function Stat({
   label,
   value,
-  highlight = false,
-  trend,
+  hint,
+  small,
 }: {
   label: string;
   value: string;
-  highlight?: boolean;
-  trend?: number | null;
+  hint?: string;
+  small?: boolean;
 }) {
   return (
-    <div>
-      <p className="text-xs text-slate-600 dark:text-slate-400">{label}</p>
-      <p
-        className={
-          highlight
-            ? "text-2xl font-bold text-sky-700 dark:text-sky-300 flex items-baseline gap-1.5"
-            : "text-sm font-medium text-slate-700 dark:text-slate-200"
-        }
+    <div className="px-4 py-2.5 min-w-0">
+      <dt className="text-[11px] text-subtle truncate">{label}</dt>
+      <dd
+        className={`text-fg truncate ${small ? "text-[13px]" : "mono text-sm"}`}
+        title={hint ?? value}
       >
         {value}
-        {trend !== undefined && trend !== null && Math.abs(trend) >= 0.01 && (
-          <span
-            title={`${trend > 0 ? "+" : ""}${trend.toFixed(2)} pt vs semestre précédent`}
-            className={`text-xs font-semibold ${trend > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}
-          >
-            {trend > 0 ? "↑" : "↓"} {Math.abs(trend).toFixed(2)}
-          </span>
-        )}
-      </p>
+      </dd>
     </div>
   );
+}
+
+function fmtNote(value: number | null): string {
+  return value === null ? "—" : value.toFixed(2);
 }

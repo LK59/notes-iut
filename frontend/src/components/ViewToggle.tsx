@@ -1,35 +1,54 @@
 import type { ViewMode } from "../viewMode";
 
-const OPTIONS: { key: ViewMode; label: string }[] = [
-  { key: "simple", label: "Simple" },
-  { key: "complet", label: "Avancée" },
-  { key: "graphiques", label: "Graphique" },
-];
+/** Un seul libellé par vue dans toute l'app — voir aussi SectionNav. */
+export const VIEW_LABELS: Record<ViewMode, string> = {
+  simple: "Simple",
+  complet: "Détaillé",
+  graphiques: "Graphiques",
+};
 
-// Largeur fixe par segment (plutôt qu'un pourcentage du conteneur) : évite tout calcul de
-// padding approximatif entre la pilule glissante et le conteneur, qui collait trop près des
-// lettres du libellé le plus long ("Graphique").
-const SEGMENT_WIDTH_REM = 5.5;
+const OPTIONS: ViewMode[] = ["simple", "complet", "graphiques"];
 
-export default function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
-  const index = OPTIONS.findIndex((o) => o.key === view);
+/**
+ * Bascule segmentée. La pastille active glisse en `transform` sur une grille à
+ * colonnes égales : le composant s'étire sur toute la largeur en mobile sans
+ * qu'aucune largeur ne soit codée en dur (l'ancienne version fixait 5,5 rem par
+ * segment, ce qui l'empêchait de s'adapter).
+ */
+export default function ViewToggle({
+  view,
+  onChange,
+}: {
+  view: ViewMode;
+  onChange: (view: ViewMode) => void;
+}) {
+  const index = OPTIONS.indexOf(view);
 
   return (
-    <div className="relative inline-flex items-center rounded-full border border-sky-200/80 dark:border-sky-800/80 bg-sky-50/80 dark:bg-slate-800/80 backdrop-blur-sm p-1 text-xs font-medium whitespace-nowrap select-none">
+    <div
+      role="tablist"
+      aria-label="Mode d'affichage"
+      className="relative grid grid-cols-3 w-full sm:w-auto sm:min-w-[19rem] rounded-lg bg-inset p-1 text-sm"
+    >
       <span
-        className="absolute top-1 bottom-1 left-1 rounded-full bg-white/90 dark:bg-sky-700/90 shadow-sm ring-1 ring-black/5 dark:ring-white/10 transition-transform duration-200 ease-out"
-        style={{ width: `${SEGMENT_WIDTH_REM}rem`, transform: `translateX(${index * SEGMENT_WIDTH_REM}rem)` }}
+        aria-hidden="true"
+        className="absolute top-1 bottom-1 left-1 rounded-md bg-surface border border-line shadow-sm transition-transform duration-200 ease-out"
+        style={{
+          width: `calc((100% - 0.5rem) / 3)`,
+          transform: `translateX(${index * 100}%)`,
+        }}
       />
-      {OPTIONS.map((o) => (
+      {OPTIONS.map((option) => (
         <button
-          key={o.key}
-          onClick={() => onChange(o.key)}
-          style={{ width: `${SEGMENT_WIDTH_REM}rem` }}
-          className={`relative z-10 py-1.5 rounded-full text-center transition-colors ${
-            o.key === view ? "text-sky-700 dark:text-white" : "text-slate-500 dark:text-slate-400"
+          key={option}
+          role="tab"
+          aria-selected={option === view}
+          onClick={() => onChange(option)}
+          className={`relative z-10 rounded-md py-1.5 text-center font-medium transition-colors ${
+            option === view ? "text-fg" : "text-muted hover:text-fg"
           }`}
         >
-          {o.label}
+          {VIEW_LABELS[option]}
         </button>
       ))}
     </div>

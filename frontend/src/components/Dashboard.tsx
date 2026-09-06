@@ -9,21 +9,21 @@ import {
   type ReauthWarning,
 } from "../api";
 import { clearDataCache } from "../offlineCache";
-import { semestreLabel } from "../semestreLabel";
+import { semestreLabel, semestreLabelShort } from "../semestreLabel";
 import UeTable from "./UeTable";
 import SemestreSummary from "./SemestreSummary";
 import PendingNotes from "./PendingNotes";
 import ObjectiveCalculator from "./ObjectiveCalculator";
 import AbsencesPanel from "./AbsencesPanel";
 import BonusMalusPanel from "./BonusMalusPanel";
-import SectionNav from "./SectionNav";
-import SettingsMenu from "./SettingsMenu";
+import SectionNav, { SECTION_LABEL } from "./SectionNav";
+import AppMenu from "./AppMenu";
 import ScrollToTop from "./ScrollToTop";
 import PrintExport from "./PrintExport";
-import ExportMenu from "./ExportMenu";
 import SimpleView from "./SimpleView";
 import ViewToggle from "./ViewToggle";
 import MatieresRecap from "./MatieresRecap";
+import { Button, Card, Notice } from "./ui";
 import { useViewMode } from "../viewMode";
 import { useOnline } from "../useOnline";
 import GradeHistoryPanel from "./GradeHistoryPanel";
@@ -76,6 +76,15 @@ export default function Dashboard({
     }
   }
 
+  function handleLogout() {
+    logout()
+      .catch(() => {})
+      .finally(() => {
+        queryClient.clear();
+        onLoggedOut();
+      });
+  }
+
   const {
     bootstrap,
     isLoading,
@@ -122,113 +131,83 @@ export default function Dashboard({
   const currentSemestre = bootstrap.semestres.find((s) => s.formsemestre_id === semestreId);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-100 via-sky-50 to-sky-200 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900 relative">
-      {/* Motif abstrait statique — met en valeur l'effet de transparence des tuiles */}
-      <svg
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 w-full h-full text-sky-900 dark:text-sky-300 opacity-[0.07] dark:opacity-[0.09]"
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        <defs>
-          <pattern id="bg-pattern" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
-            <circle cx="20" cy="20" r="1.3" fill="currentColor" />
-            <circle cx="0" cy="0" r="1.3" fill="currentColor" />
-            <circle cx="40" cy="0" r="1.3" fill="currentColor" />
-            <circle cx="0" cy="40" r="1.3" fill="currentColor" />
-            <circle cx="40" cy="40" r="1.3" fill="currentColor" />
-            <line x1="14" y1="20" x2="26" y2="20" stroke="currentColor" strokeWidth="0.7" />
-            <line x1="20" y1="14" x2="20" y2="26" stroke="currentColor" strokeWidth="0.7" />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#bg-pattern)" />
-      </svg>
-      <header className="print:hidden sticky top-0 z-20 bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl border-b border-sky-200/60 dark:border-slate-800/60 shadow-sm px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <img
-            src="/api/photo"
-            alt=""
-            className="h-9 w-9 rounded-full object-cover border border-sky-200 dark:border-slate-700 shrink-0"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
-          <h1 className="text-base sm:text-lg font-semibold text-sky-950 dark:text-sky-100 truncate">
-            Notes IUT Annecy — {username}
-          </h1>
-          <button
-            onClick={refreshCurrent}
-            disabled={refreshing}
-            aria-label="Rafraîchir les données"
-            title="Rafraîchir les données"
-            className="shrink-0 p-1.5 rounded-full text-slate-400 hover:text-sky-700 hover:bg-sky-50 dark:text-slate-500 dark:hover:text-sky-300 dark:hover:bg-slate-800 disabled:opacity-50"
-          >
-            <svg
-              className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path
-                fillRule="evenodd"
-                d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H3.989a.75.75 0 0 0-.75.75v4.242a.75.75 0 0 0 1.5 0v-2.43l.31.31a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm1.23-3.723a.75.75 0 0 0 .219-.53V2.929a.75.75 0 0 0-1.5 0V5.36l-.31-.31A7 7 0 0 0 3.239 8.188a.75.75 0 1 0 1.448.389A5.5 5.5 0 0 1 13.89 6.11l.311.31h-2.432a.75.75 0 0 0 0 1.5h4.243a.75.75 0 0 0 .53-.219Z"
-                clipRule="evenodd"
-              />
-            </svg>
-          </button>
-          {newIds.size > 0 && (
+    <div className="min-h-screen bg-canvas">
+      {/* ── En-tête : deux rangées, une seule zone d'actions ────────────────── */}
+      <header className="print:hidden sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-2.5 space-y-2.5">
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/api/photo"
+              alt=""
+              className="h-8 w-8 shrink-0 rounded-full object-cover bg-inset"
+              onError={(event) => {
+                event.currentTarget.style.visibility = "hidden";
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-fg leading-tight truncate">Notes IUT</p>
+              <p className="text-xs text-muted leading-tight truncate">{username}</p>
+            </div>
+
+            {newIds.size > 0 && (
+              <button
+                onClick={() =>
+                  document
+                    .getElementById(view === "complet" ? "detail-ue" : "matieres-simple")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
+                className="shrink-0 rounded-full bg-pos-soft px-2.5 py-1 text-xs font-medium text-pos hover:opacity-80"
+              >
+                {newIds.size} nouvelle{newIds.size > 1 ? "s" : ""}
+              </button>
+            )}
+
             <button
-              onClick={() =>
-                document
-                  .getElementById(view === "simple" ? "matieres" : "detail-ue")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
-              }
-              title="Aller aux nouvelles notes"
-              className="shrink-0 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-xs font-medium px-2 py-0.5 whitespace-nowrap hover:bg-emerald-200 dark:hover:bg-emerald-900/60"
+              onClick={refreshCurrent}
+              disabled={refreshing}
+              aria-label="Actualiser les données"
+              title="Actualiser"
+              className="shrink-0 rounded-lg border border-line-strong bg-surface p-2 text-fg hover:bg-inset transition-colors disabled:opacity-50"
             >
-              {newIds.size} nouvelle{newIds.size > 1 ? "s" : ""} note{newIds.size > 1 ? "s" : ""}
+              <svg
+                className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H3.989a.75.75 0 0 0-.75.75v4.242a.75.75 0 0 0 1.5 0v-2.43l.31.31a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm1.23-3.723a.75.75 0 0 0 .219-.53V2.929a.75.75 0 0 0-1.5 0V5.36l-.31-.31A7 7 0 0 0 3.239 8.188a.75.75 0 1 0 1.448.389A5.5 5.5 0 0 1 13.89 6.11l.311.31h-2.432a.75.75 0 0 0 0 1.5h4.243a.75.75 0 0 0 .53-.219Z"
+                  clipRule="evenodd"
+                />
+              </svg>
             </button>
-          )}
-        </div>
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-          <select
-            value={semestreId ?? ""}
-            onChange={(e) => setSemestreId(e.target.value)}
-            className="rounded-md border border-sky-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 px-3 py-1.5 text-sm flex-1 min-w-0"
-          >
-            {bootstrap.semestres.map((s) => (
-              <option key={s.formsemestre_id} value={s.formsemestre_id}>
-                {semestreLabel(s)}
-              </option>
-            ))}
-          </select>
-          <ViewToggle view={view} onChange={setView} />
-          {semestreId && <ExportMenu semestreId={semestreId} onExportSimulation={() => setPrintMode(true)} />}
-          <SettingsMenu />
-          <button
-            onClick={() => (window.location.href = "/preview/s5")}
-            className="text-sm text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-sky-100 whitespace-nowrap"
-          >
-            Prévisions S5/S6
-          </button>
-          <button
-            onClick={() => setSessionsOpen(true)}
-            className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
-          >
-            Sessions
-          </button>
-          {isAdmin && (
-            <button
-              onClick={() => setAdminOpen(true)}
-              className="text-sm text-sky-700 dark:text-sky-300 hover:text-sky-900 dark:hover:text-sky-100 whitespace-nowrap"
+
+            <AppMenu
+              semestreId={semestreId}
+              isAdmin={isAdmin}
+              onExportSimulation={() => setPrintMode(true)}
+              onOpenSessions={() => setSessionsOpen(true)}
+              onOpenAdmin={() => setAdminOpen(true)}
+              onLogout={handleLogout}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={semestreId ?? ""}
+              onChange={(event) => setSemestreId(event.target.value)}
+              aria-label="Semestre"
+              className="shrink-0 rounded-lg border border-line-strong bg-surface px-2.5 py-1.5 text-sm font-medium text-fg mono"
             >
-              Admin
-            </button>
-          )}
-          <button
-            onClick={() => logout().catch(() => {}).finally(() => { queryClient.clear(); onLoggedOut(); })}
-            className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 whitespace-nowrap"
-          >
-            Déconnexion
-          </button>
+              {bootstrap.semestres.map((semestre) => (
+                <option key={semestre.formsemestre_id} value={semestre.formsemestre_id}>
+                  {semestreLabelShort(semestre)}
+                </option>
+              ))}
+            </select>
+            <ViewToggle view={view} onChange={setView} />
+          </div>
         </div>
       </header>
 
@@ -241,144 +220,144 @@ export default function Dashboard({
         moyenneGenerale={moyenneSimulee}
       />
 
-      <main className="print:hidden max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 overflow-x-hidden">
+      <main className="print:hidden max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
         {view === "complet" && <SectionNav />}
-        <GradeHistoryPanel items={gradeHistory} />
 
         {(!online || cacheFallback === "offline") && (
-          <div className="print:hidden bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm rounded-lg p-3">
-            Mode hors-ligne : affichage des dernières données enregistrées sur cet appareil, possiblement obsolètes.
-          </div>
+          <Notice>Hors ligne — dernières données enregistrées sur cet appareil, possiblement dépassées.</Notice>
         )}
 
         {online && cacheFallback === "scodoc_down" && (
-          <div className="print:hidden bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm rounded-lg p-3">
-            Le portail de notes de l'IUT est indisponible pour le moment : affichage des dernières données connues.
-          </div>
+          <Notice tone="warn">
+            Le portail de l'IUT ne répond pas — affichage des dernières données connues.
+          </Notice>
         )}
 
         {reauthWarning && (
-          <div className="print:hidden flex items-center justify-between gap-3 flex-wrap bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm rounded-lg p-3">
-            <span>
-              {reauthWarning === "idle"
-                ? "Tu n'as pas ouvert l'app depuis un moment : ta connexion va bientôt expirer."
-                : "Ta connexion arrive à expiration : reconnecte-toi pour continuer à recevoir tes notes."}
-            </span>
-            <button
-              onClick={handleReconnect}
-              disabled={reconnecting}
-              className="shrink-0 rounded-md bg-amber-600 px-3 py-1.5 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
-            >
-              {reconnecting ? "Reconnexion…" : "Se reconnecter"}
-            </button>
-          </div>
+          <Notice
+            tone="warn"
+            action={
+              <Button tone="primary" onClick={handleReconnect} disabled={reconnecting}>
+                {reconnecting ? "Reconnexion…" : "Se reconnecter"}
+              </Button>
+            }
+          >
+            {reauthWarning === "idle"
+              ? "Tu n'as pas ouvert l'app depuis un moment : ta connexion va bientôt expirer."
+              : "Ta connexion arrive à expiration. Reconnecte-toi pour continuer à recevoir tes notes."}
+          </Notice>
         )}
 
         {refreshError && (
-          <div className="print:hidden flex items-center justify-between gap-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm rounded-lg p-3">
-            <span>{refreshError}</span>
-            <button onClick={() => setRefreshError(null)} className="shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-200" aria-label="Fermer">✕</button>
-          </div>
+          <Notice
+            tone="error"
+            action={
+              <button
+                onClick={() => setRefreshError(null)}
+                aria-label="Masquer le message"
+                className="shrink-0 px-1 opacity-60 hover:opacity-100"
+              >
+                ✕
+              </button>
+            }
+          >
+            {refreshError}
+          </Notice>
         )}
 
-        {releve.message && (
-          <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm rounded-lg p-3">
-            {releve.message}
-          </div>
-        )}
+        {releve.message && <Notice tone="warn">{releve.message}</Notice>}
 
-        <div id="resume">
+        <GradeHistoryPanel items={gradeHistory} />
+
+        <div id="resume" className="scroll-mt-32">
           <SemestreSummary releve={releve} trend={trend} />
         </div>
 
+        {hasSimulation && (
+          <Card tone="simulated" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <p className="text-xs text-sim">Moyenne générale simulée</p>
+              <p className="mono text-2xl font-medium text-sim leading-tight">
+                {moyenneSimulee !== null ? moyenneSimulee.toFixed(2) : "—"}
+                <span className="text-sm text-muted"> / 20</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {confirmingReset && (
+                <Button onClick={() => setConfirmingReset(false)}>Annuler</Button>
+              )}
+              <Button
+                tone={confirmingReset ? "danger" : "neutral"}
+                onClick={handleReset}
+                disabled={resetting}
+              >
+                {resetting ? "Réinitialisation…" : confirmingReset ? "Confirmer ?" : "Effacer mes simulations"}
+              </Button>
+            </div>
+          </Card>
+        )}
+
         {view === "simple" && (
-          <div id="matieres">
-            <SimpleView releve={releve} selectedKey={selectedKey} onSelect={setSelectedKey} />
+          <div id="matieres-simple" className="scroll-mt-32">
+            <SimpleView
+              releve={releve}
+              overrides={overrides}
+              newIds={newIds}
+              selectedKey={selectedKey}
+              onSelect={setSelectedKey}
+            />
           </div>
         )}
 
         {view === "complet" && (
           <>
-        <div id="notes-a-saisir" className="print:hidden">
-          <PendingNotes items={pending} overrides={overrides} onChange={handleOverrideChange} />
-        </div>
+            <div id="notes-non-publiees" className="scroll-mt-32">
+              <PendingNotes items={pending} overrides={overrides} onChange={handleOverrideChange} />
+            </div>
 
-        {hasSimulation && (
-          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <span className="text-sm text-amber-700 dark:text-amber-300">Moyenne générale simulée avec tes modifications</span>
-              <div className="text-2xl font-bold text-amber-700 dark:text-amber-300">
-                {moyenneSimulee !== null ? moyenneSimulee.toFixed(2) : "—"} / 20
+            <div id="objectif" className="scroll-mt-32">
+              <ObjectiveCalculator releve={releve} overrides={overrides} onApply={handleApplyMany} />
+            </div>
+
+            <div id="par-matiere" className="scroll-mt-32">
+              <MatieresRecap releve={releve} overrides={overrides} />
+            </div>
+
+            <section id="detail-ue" className="scroll-mt-32">
+              <div className="mb-3">
+                <h2 className="text-sm font-semibold text-fg">{SECTION_LABEL["detail-ue"]}</h2>
+                <p className="text-xs text-muted">
+                  Déplie une UE, puis un module, pour voir chaque évaluation et sa place dans la promo.
+                </p>
               </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                {ueEntries.map(([code, ue]) => (
+                  <UeTable
+                    key={code}
+                    ueCode={code}
+                    ue={ue}
+                    releve={releve}
+                    overrides={overrides}
+                    onChange={handleOverrideChange}
+                    selectedKey={selectedKey}
+                    onSelect={setSelectedKey}
+                    printMode={printMode}
+                    newIds={newIds}
+                  />
+                ))}
+              </div>
+            </section>
+
+            <BonusMalusPanel releve={releve} />
+
+            <div id="absences" className="scroll-mt-32">
+              <AbsencesPanel absences={absences} officialAbsences={releve.semestre.absences} />
             </div>
-            <div className="print:hidden flex items-center gap-2 self-start sm:self-auto">
-              {confirmingReset && (
-                <button
-                  onClick={() => setConfirmingReset(false)}
-                  className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-1.5 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 whitespace-nowrap"
-                >
-                  Annuler
-                </button>
-              )}
-              <button
-                onClick={handleReset}
-                disabled={resetting}
-                className={`rounded-md border px-3 py-1.5 text-sm disabled:opacity-50 whitespace-nowrap ${
-                  confirmingReset
-                    ? "border-red-300 dark:border-red-700 bg-red-600 text-white hover:bg-red-700"
-                    : "border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-slate-700"
-                }`}
-              >
-                {resetting ? "Réinitialisation…" : confirmingReset ? "Confirmer la réinitialisation ?" : "Réinitialiser (revenir à la vérité)"}
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div id="objectif" className="print:hidden">
-          <ObjectiveCalculator releve={releve} overrides={overrides} onApply={handleApplyMany} />
-        </div>
-
-        <div id="matieres">
-          <MatieresRecap releve={releve} overrides={overrides} />
-        </div>
-
-        <div id="detail-ue">
-          <h2 className="text-sm font-semibold text-sky-900 dark:text-sky-100 mb-1">Détail par UE</h2>
-          <p className="print:hidden text-xs text-slate-600 dark:text-slate-400 mb-3">
-            Clique l'en-tête d'une UE pour la replier, clique un module pour replier ses évaluations, clique une
-            évaluation pour voir sa position dans la promo.
-          </p>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 items-start">
-            {ueEntries.map(([code, ue]) => (
-              <UeTable
-                key={code}
-                ueCode={code}
-                ue={ue}
-                releve={releve}
-                overrides={overrides}
-                onChange={handleOverrideChange}
-                selectedKey={selectedKey}
-                onSelect={setSelectedKey}
-                printMode={printMode}
-                newIds={newIds}
-              />
-            ))}
-          </div>
-        </div>
-
-        <div className="print:hidden">
-          <BonusMalusPanel releve={releve} />
-        </div>
-
-        <div id="absences" className="print:hidden">
-          <AbsencesPanel absences={absences} officialAbsences={releve.semestre.absences} />
-        </div>
           </>
         )}
 
         {view === "graphiques" && (
-          <Suspense fallback={<div className="h-[300px]" />}>
+          <Suspense fallback={<div className="h-[300px] rounded-xl bg-inset animate-pulse" />}>
             <GraphiquesView
               releve={releve}
               overrides={overrides}
@@ -392,9 +371,9 @@ export default function Dashboard({
         )}
       </main>
 
-      <footer className="print:hidden border-t border-sky-200/60 dark:border-slate-800/60 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl px-4 sm:px-6 py-3 text-center">
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Notes IUT Annecy — simulateur non officiel · v{APP_VERSION} · {BUILD_ID}
+      <footer className="print:hidden border-t border-line px-4 sm:px-6 py-4 text-center">
+        <p className="text-xs text-subtle">
+          Notes IUT Annecy — simulateur non officiel · v{APP_VERSION} · <span className="mono">{BUILD_ID}</span>
         </p>
       </footer>
 
@@ -407,9 +386,9 @@ export default function Dashboard({
   );
 }
 
-function Centered({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className={`min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950 text-slate-600 dark:text-slate-300 px-4 text-center ${className}`}>
+    <div className="min-h-screen flex items-center justify-center bg-canvas text-muted px-4 text-center text-sm">
       {children}
     </div>
   );
@@ -417,42 +396,34 @@ function Centered({ children, className = "" }: { children: React.ReactNode; cla
 
 function DashboardError({ message, onLoggedOut }: { message: string; onLoggedOut?: () => void }) {
   const queryClient = useQueryClient();
+
   function handleClearAndReload() {
     queryClient.clear();
     clearDataCache();
     clearServerCache().catch(() => {}).finally(() => window.location.reload());
   }
+
   function handleLogout() {
     queryClient.clear();
     logout().catch(() => {}).finally(() => onLoggedOut?.());
   }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950 px-4 text-center">
-      <div className="max-w-sm space-y-4">
-        <p className="text-red-600 dark:text-red-400">{message}</p>
-        <div className="flex flex-col sm:flex-row gap-2 justify-center flex-wrap">
-          <button
-            onClick={handleClearAndReload}
-            className="rounded-md bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
-          >
-            Vider les donnees locales
-          </button>
-          <button
-            onClick={() => window.location.reload()}
-            className="rounded-md border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-slate-700"
-          >
-            Recharger
-          </button>
+    <div className="min-h-screen flex items-center justify-center bg-canvas px-4">
+      <Card className="max-w-sm w-full p-6 text-center space-y-4">
+        <p className="text-sm text-neg">{message}</p>
+        <div className="flex flex-col gap-2">
+          <Button tone="primary" onClick={handleClearAndReload}>
+            Vider les données locales
+          </Button>
+          <Button onClick={() => window.location.reload()}>Recharger</Button>
           {onLoggedOut && (
-            <button
-              onClick={handleLogout}
-              className="rounded-md border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-4 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-            >
+            <Button tone="quiet" onClick={handleLogout}>
               Se déconnecter
-            </button>
+            </Button>
           )}
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

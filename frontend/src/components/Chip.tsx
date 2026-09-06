@@ -1,19 +1,35 @@
-export type ChipColor = "slate" | "sky" | "violet" | "amber" | "emerald" | "rose";
+export type ChipColor = "neutral" | "accent" | "sim" | "pos" | "neg";
 
+/**
+ * Métadonnée courte (coef, rang, poids, ECTS).
+ *
+ * Volontairement discrète : la version précédente empilait des pastilles de six
+ * couleurs différentes sous chaque UE, ce qui mettait des informations secondaires
+ * au même niveau visuel que la note elle-même. Ici tout est neutre par défaut, et
+ * la couleur est réservée aux deux cas qui portent réellement un sens (valeur
+ * simulée, bonus/malus).
+ */
 const COLOR_MAP: Record<ChipColor, string> = {
-  slate: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-  sky: "bg-sky-100 text-sky-700 dark:bg-sky-950/50 dark:text-sky-300",
-  violet: "bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300",
-  amber: "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300",
-  emerald: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
-  rose: "bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300",
+  neutral: "bg-inset text-muted",
+  accent: "bg-accent-soft text-accent",
+  sim: "bg-sim-soft text-sim",
+  pos: "bg-pos-soft text-pos",
+  neg: "bg-neg-soft text-neg",
 };
 
-export default function Chip({ color, title, children }: { color: ChipColor; title?: string; children: React.ReactNode }) {
+export default function Chip({
+  color = "neutral",
+  title,
+  children,
+}: {
+  color?: ChipColor;
+  title?: string;
+  children: React.ReactNode;
+}) {
   return (
     <span
       title={title}
-      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none whitespace-nowrap ${COLOR_MAP[color]}`}
+      className={`inline-flex items-center rounded-md px-1.5 py-[3px] text-[11px] font-medium leading-none whitespace-nowrap ${COLOR_MAP[color]}`}
     >
       {children}
     </span>

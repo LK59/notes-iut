@@ -2,18 +2,209 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Sans ceci, le navigateur peut peindre les éléments natifs (popups de <select>,
-   scrollbars, ...) selon le thème du système plutôt que celui choisi dans l'app
-   (classe .dark sur <html>), même quand le reste de la page est en mode clair. */
+/* ──────────────────────────────────────────────────────────────────────────
+   Typographie auto-hébergée.
+   La CSP du backend est `font-src 'self'` : une font chargée depuis Google
+   Fonts serait bloquée silencieusement. Les fichiers sont donc servis depuis
+   /fonts (sous-ensembles latin + latin-ext, variables, ~83 Ko au total).
+
+   Geist       → toute l'interface.
+   Geist Mono  → toutes les valeurs numériques (notes, coefs, rangs, %).
+   Les notes sont la donnée centrale de l'app : leur donner une police à
+   chasse fixe les aligne verticalement et les distingue du texte courant.
+   ────────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geist-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geist-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geistmono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/geistmono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Jetons de couleur.
+
+   Toutes les couleurs de l'app passent par ces variables, exposées à Tailwind
+   dans tailwind.config.js (bg-surface, text-muted, border-line…). Conséquence
+   voulue : un composant ne s'écrit qu'une fois, sans doubler chaque classe
+   d'un `dark:` — les deux thèmes ne peuvent donc plus diverger.
+
+   Valeurs en triplets RVB pour que les modificateurs d'opacité de Tailwind
+   (`bg-surface/60`) continuent de fonctionner.
+   ────────────────────────────────────────────────────────────────────────── */
 :root {
   color-scheme: light;
+
+  --c-canvas: 251 251 250;
+  --c-surface: 255 255 255;
+  --c-inset: 244 244 242;
+  --c-line: 230 230 226;
+  --c-line-strong: 209 209 203;
+
+  --c-fg: 22 24 28;
+  --c-muted: 92 96 105;
+  --c-subtle: 139 143 152;
+
+  --c-accent: 67 56 202;
+  --c-accent-hover: 55 48 163;
+  --c-accent-fg: 255 255 255;
+  --c-accent-soft: 238 240 255;
+
+  --c-pos: 13 122 84;
+  --c-pos-soft: 223 243 234;
+  --c-neg: 193 44 60;
+  --c-neg-soft: 253 231 233;
+  --c-warn: 161 98 7;
+  --c-warn-soft: 254 243 214;
+
+  /* Notes simulées : une teinte à part, jamais utilisée ailleurs, pour qu'un
+     chiffre inventé ne puisse pas être confondu avec un chiffre réel. */
+  --c-sim: 154 74 6;
+  --c-sim-soft: 253 240 223;
 }
+
 :root.dark {
   color-scheme: dark;
+
+  --c-canvas: 13 14 17;
+  --c-surface: 21 23 27;
+  --c-inset: 28 31 36;
+  --c-line: 38 42 48;
+  --c-line-strong: 54 59 67;
+
+  --c-fg: 236 238 242;
+  --c-muted: 154 161 173;
+  --c-subtle: 107 114 128;
+
+  --c-accent: 165 180 252;
+  --c-accent-hover: 199 210 254;
+  --c-accent-fg: 20 20 40;
+  --c-accent-soft: 38 36 77;
+
+  --c-pos: 95 211 160;
+  --c-pos-soft: 18 46 38;
+  --c-neg: 255 138 148;
+  --c-neg-soft: 56 25 30;
+  --c-warn: 251 191 36;
+  --c-warn-soft: 44 36 20;
+
+  --c-sim: 245 175 96;
+  --c-sim-soft: 55 40 22;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: rgb(var(--c-canvas));
+    color: rgb(var(--c-fg));
+    font-family: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, "Helvetica Neue", sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Tout ce qui est chiffré s'aligne en colonne. */
+  .tnum,
+  input[type="number"] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Anneau de focus unique et visible sur les deux thèmes. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-accent));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Chrome/Safari ajoutent des flèches qui déforment les petits champs de
+     saisie de note ; la saisie reste numérique grâce à inputmode. */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.1em;
+    -webkit-appearance: none;
+    appearance: none;
+    padding-right: 2rem;
+  }
+}
+
+@layer utilities {
+  .mono {
+    font-family: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Masque les barres de défilement des rails horizontaux (barre de sections,
+     onglets) sans supprimer le défilement lui-même. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @media print {
   body {
     background: white !important;
+    color: black !important;
   }
 }
