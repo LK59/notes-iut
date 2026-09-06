@@ -93,6 +93,11 @@ export function useReleveData(view: ViewMode) {
     })),
   });
 
+  // useQueries renvoie un nouveau tableau à chaque rendu : utilisé tel quel en dépendance,
+  // il faisait recalculer ces deux memos systématiquement. On dépend donc d'une signature
+  // stable qui ne change que lorsqu'un relevé arrive réellement.
+  const evolutionSignature = evolutionQueries.map((q) => (q.data ? "1" : "0")).join("");
+
   const allReleves = useMemo(() => {
     const result: Record<string, Releve> = {};
     evolutionQueries.forEach((q, idx) => {
@@ -100,7 +105,8 @@ export function useReleveData(view: ViewMode) {
       if (q.data && s) result[s.formsemestre_id] = q.data.releve;
     });
     return result;
-  }, [evolutionQueries, bootstrap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evolutionSignature, bootstrap]);
 
   const evolution = useMemo<SemestrePoint[]>(() => {
     return (bootstrap?.semestres ?? []).map((s, idx) => ({
@@ -109,7 +115,8 @@ export function useReleveData(view: ViewMode) {
         ? numericNoteValue(evolutionQueries[idx].data!.releve.semestre.notes?.value)
         : null,
     }));
-  }, [evolutionQueries, bootstrap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evolutionSignature, bootstrap]);
 
   // ── Nouvelles notes et historique ─────────────────────────────────────────
   const newIds = useMemo(() => {

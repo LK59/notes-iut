@@ -21,7 +21,7 @@ class InvalidCredentials(AppError):
 class CasUnavailable(AppError):
     status_code = 503
     code = "CAS_UNAVAILABLE"
-    message = "Le service de connexion de l'universite ne repond pas. Reessaie dans quelques minutes."
+    message = "Le service de connexion de l'université ne répond pas. Réessaie dans quelques minutes."
     retryable = True
 
 
@@ -35,7 +35,7 @@ class CasUnexpectedResponse(AppError):
 class ScodocUnavailable(AppError):
     status_code = 503
     code = "SCODOC_UNAVAILABLE"
-    message = "Le portail de notes ne repond pas. Reessaie plus tard."
+    message = "Le portail de notes ne répond pas. Réessaie plus tard."
     retryable = True
 
 

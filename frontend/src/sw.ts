@@ -17,6 +17,14 @@ self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
+  // Déconnexion : la page demande la purge des réponses /api mises en cache ici.
+  // Elles contiennent le relevé complet et la photo du compte qui se déconnecte, et
+  // le service worker n'applique pas le `Cache-Control: private, no-store` du backend.
+  if (event.data?.type === "CLEAR_USER_CACHES") {
+    event.waitUntil(
+      Promise.all([caches.delete("api-data"), caches.delete("api-photo")])
+    );
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -29,11 +37,23 @@ const cacheOnlyOk = {
     response.status === 200 ? response : null,
 };
 
+// Un rafraîchissement explicite (bouton ⟳ → ?refresh=true) doit TOUJOURS aller au réseau.
+// Sans cette exclusion, stale-while-revalidate servait l'entrée mise en cache lors du clic
+// précédent — le bouton affichait donc l'état d'avant, en silence, et la revalidation de
+// fond ne remontait jamais jusqu'à l'UI.
+const isExplicitRefresh = (url: URL) => url.searchParams.get("refresh") === "true";
+
+registerRoute(
+  ({ url }) => url.pathname.startsWith("/api/releve/") && isExplicitRefresh(url),
+  new NetworkOnly()
+);
+
 // Données de relevés : stale-while-revalidate → réponse immédiate du cache, mise à jour en fond.
 // Cela rend les rechargements de page quasi-instantanés sans sacrifier la fraîcheur des données.
 registerRoute(
   ({ url }) =>
-    url.pathname === "/api/semestres" || url.pathname.startsWith("/api/releve/"),
+    url.pathname === "/api/semestres" ||
+    (url.pathname.startsWith("/api/releve/") && !isExplicitRefresh(url)),
   new StaleWhileRevalidate({
     cacheName: "api-data",
     plugins: [

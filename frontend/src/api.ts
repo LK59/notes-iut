@@ -1,5 +1,5 @@
 import type { PremiereConnexionResponse, ReleveResponse } from "./types";
-import { cacheGet, cacheSet, clearCache } from "./offlineCache";
+import { cacheGet, cacheSet, clearCache, clearServiceWorkerCaches } from "./offlineCache";
 import { PremiereConnexionSchema, ReleveResponseSchema } from "./schemas";
 
 /** Erreur HTTP "normale" (réponse reçue du serveur) — distincte d'une vraie panne réseau. */
@@ -30,7 +30,7 @@ const REQUEST_TIMEOUT_MS = 15000;
  * rester pendant indéfiniment. On force une erreur réseau explicite au bout d'un délai donné,
  * traitée comme une panne par withOfflineFallback().
  */
-async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let resp: Response;
@@ -80,10 +80,10 @@ async function request<T>(path: string, init?: RequestInit, retried = false): Pr
 }
 
 function messageForStatus(status: number): string {
-  if (status === 401) return "Ta session a expire. Reconnecte-toi.";
-  if (status === 429) return "Trop de tentatives. Reessaie dans quelques minutes.";
-  if (status === 503) return "Un service externe ne repond pas. Reessaie plus tard.";
-  if (status >= 500) return "Le serveur a rencontre une erreur.";
+  if (status === 401) return "Ta session a expiré. Reconnecte-toi.";
+  if (status === 429) return "Trop de tentatives. Réessaie dans quelques minutes.";
+  if (status === 503) return "Un service externe ne répond pas. Réessaie plus tard.";
+  if (status >= 500) return "Le serveur a rencontré une erreur.";
   return `Erreur ${status}`;
 }
 
@@ -95,7 +95,7 @@ function validateSemestresPayload(data: unknown): PremiereConnexionResponse {
   const result = PremiereConnexionSchema.safeParse(data);
   if (!result.success) {
     throw _invalidPayloadError(
-      "Le portail de notes a renvoye une reponse invalide. Reessaie dans quelques minutes."
+      "Le portail de notes a renvoyé une réponse invalide. Réessaie dans quelques minutes."
     );
   }
   return result.data as unknown as PremiereConnexionResponse;
@@ -105,7 +105,7 @@ function validateRelevePayload(data: unknown): ReleveResponse {
   const result = ReleveResponseSchema.safeParse(data);
   if (!result.success) {
     throw _invalidPayloadError(
-      "Le portail de notes a renvoye un releve invalide. Reessaie dans quelques minutes."
+      "Le portail de notes a renvoyé un relevé invalide. Réessaie dans quelques minutes."
     );
   }
   return result.data as unknown as ReleveResponse;
@@ -225,8 +225,15 @@ export function login(username: string, password: string, remember = false, onSt
   return pollAuthJob("/api/login", "/api/login/status/", { username, password, remember }, onStage);
 }
 
-export function logout() {
-  clearCache(["notes-iut-cache:", "notes-iut-sim:"]);
+/**
+ * Déconnexion : purge le stockage local (relevés, simulations, historique des notes)
+ * ET les caches du service worker avant de fermer la session serveur. Les trois couches
+ * doivent être vidées ensemble — sinon, sur un appareil partagé, l'étudiant suivant
+ * retrouve les données du précédent.
+ */
+export async function logout() {
+  clearCache();
+  await clearServiceWorkerCaches();
   return request<{ ok: boolean }>("/api/logout", { method: "POST" });
 }
 

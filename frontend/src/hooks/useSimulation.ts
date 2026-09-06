@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { moyenneGenerale, pendingItems, ueMoyenne } from "../simulator";
 import type { Releve } from "../types";
 
@@ -58,15 +58,26 @@ export function useSimulation(
     return () => clearTimeout(id);
   }, [confirmingReset]);
 
-  const ueMoyennes: Record<string, number | null> = {};
-  if (releve) {
+  // Ces trois calculs parcourent toutes les UE, tous les modules et toutes les évaluations.
+  // Sans mémoïsation ils étaient refaits à chaque rendu — donc à chaque caractère tapé dans
+  // un champ de note, ce qui était la cause principale de la latence de saisie sur mobile.
+  const ueMoyennes = useMemo<Record<string, number | null>>(() => {
+    const result: Record<string, number | null> = {};
+    if (!releve) return result;
     for (const [code, ue] of Object.entries(releve.ues)) {
-      ueMoyennes[code] = ueMoyenne(ue, releve, overrides);
+      result[code] = ueMoyenne(ue, releve, overrides);
     }
-  }
+    return result;
+  }, [releve, overrides]);
 
-  const moyenneSimulee = releve ? moyenneGenerale(releve.ues, ueMoyennes) : null;
-  const pending = releve ? pendingItems(releve) : [];
+  const moyenneSimulee = useMemo(
+    () => (releve ? moyenneGenerale(releve.ues, ueMoyennes) : null),
+    [releve, ueMoyennes]
+  );
+
+  // Ne dépend que du relevé : les surcharges ne changent pas la liste des notes non publiées.
+  const pending = useMemo(() => (releve ? pendingItems(releve) : []), [releve]);
+
   const hasSimulation = Object.keys(overrides).length > 0;
 
   function handleOverrideChange(key: string, value: number | undefined) {

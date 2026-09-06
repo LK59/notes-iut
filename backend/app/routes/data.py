@@ -35,7 +35,10 @@ def api_semestres(request: Request, background_tasks: BackgroundTasks):
 
     cached = cache.get_semestres(session.username)
     if cached is not None:
-        background_tasks.add_task(_prefetch_releves, session, cached.get("semestres", []))
+        # Pas de prefetch ici : cette route est appelée à chaque retour au premier plan de la
+        # PWA. Reprogrammer un balayage de tous les semestres à chaque fois multipliait les
+        # requêtes vers le portail de l'IUT sans rien apporter, puisque les relevés déjà en
+        # cache sont de toute façon ignorés par _prefetch_releves.
         return cached
 
     try:

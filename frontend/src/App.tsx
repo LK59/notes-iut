@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { autoLoginIfRemembered, me, setUnauthorizedHandler, type ReauthWarning } from "./api";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 import PreviewApp from "./components/PreviewApp";
+
+/**
+ * Au retour au premier plan, on ne réinterroge le portail que si l'app est restée en
+ * arrière-plan au moins ce délai. `invalidateQueries` force en effet un refetch quel que
+ * soit le `staleTime` : sans ce garde-fou, un simple aller-retour vers une autre app
+ * relançait un relevé complet — et, côté serveur, un prefetch de tous les semestres.
+ */
+const BACKGROUND_REFRESH_THRESHOLD_MS = 3 * 60 * 1000;
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -11,6 +19,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [checking, setChecking] = useState(true);
   const [reauthWarning, setReauthWarning] = useState<ReauthWarning>(null);
+  const hiddenSinceRef = useRef<number | null>(null);
 
   function checkAuth() {
     me()
@@ -52,18 +61,25 @@ export default function App() {
   // En PWA standalone (mobile), l'app n'est jamais vraiment "fermée" : elle passe en arrière-plan
   // puis revient au premier plan sans rechargement ni navigation, donc ni "pageshow" ni le focus
   // de fenêtre (peu fiable en standalone) ne se déclenchent. On utilise visibilitychange, qui lui
-  // se déclenche de façon fiable dans ce cas : on revalide la session (elle a pu expirer pendant
-  // l'absence) et on relance un refetch en fond des données affichées, pour que l'utilisateur
-  // retrouve toujours un état à jour sans avoir à quitter/rouvrir l'app.
+  // se déclenche de façon fiable — mais on distingue deux cas : la session est revalidée à chaque
+  // retour (c'est gratuit, et elle a pu expirer), tandis que le rechargement des données n'est
+  // déclenché qu'après une absence assez longue pour que le relevé ait pu changer.
   useEffect(() => {
-    const onVisible = () => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenSinceRef.current = Date.now();
+        return;
+      }
       if (document.visibilityState !== "visible") return;
       checkAuth();
+      const hiddenSince = hiddenSinceRef.current;
+      hiddenSinceRef.current = null;
+      if (hiddenSince !== null && Date.now() - hiddenSince < BACKGROUND_REFRESH_THRESHOLD_MS) return;
       queryClient.invalidateQueries({ queryKey: ["semestres"] });
       queryClient.invalidateQueries({ queryKey: ["releve"] });
     };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
   }, [queryClient]);
 
   // Session serveur courte (4h) : si une requête API renvoie 401 en cours d'usage,
@@ -87,8 +103,8 @@ export default function App() {
   // le check initial traîne, on affiche un signe de vie plutôt qu'un écran blanc/bleu muet.
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-sky-50 dark:bg-slate-950">
-        <div className="h-6 w-6 rounded-full border-2 border-sky-300 dark:border-sky-700 border-t-sky-600 dark:border-t-sky-300 animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-canvas">
+        <div className="h-5 w-5 rounded-full border-2 border-line-strong border-t-accent animate-spin" />
       </div>
     );
   }

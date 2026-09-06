@@ -1,4 +1,11 @@
-/** Gestion des abonnements push Web : subscribe / unsubscribe / state. */
+/** Gestion des abonnements push Web : subscribe / unsubscribe / state.
+ *
+ * Tous les appels passent par request() d'api.ts et non par fetch brut : ils héritent
+ * ainsi du timeout de 15 s, de la reconnexion silencieuse sur 401 et des messages
+ * d'erreur normalisés. Sans ça, activer les notifications sur une session expirée
+ * échouait avec un message générique là où le reste de l'app se reconnecte tout seul.
+ */
+import { request } from "./api";
 
 export function isPushSupported(): boolean {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
@@ -32,9 +39,7 @@ function subscriptionUsesVapidKey(subscription: PushSubscription, vapidKey: stri
 }
 
 async function getVapidPublicKey(): Promise<string> {
-  const res = await fetch("/api/push/vapid-key");
-  if (!res.ok) throw new Error("Impossible de récupérer la clé VAPID.");
-  const data: { vapid_public_key: string } = await res.json();
+  const data = await request<{ vapid_public_key: string }>("/api/push/vapid-key");
   return data.vapid_public_key;
 }
 
@@ -56,13 +61,14 @@ export async function subscribeToPush(includeGradeValue = false): Promise<void> 
   if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
     throw new Error("Abonnement push incomplet. Réessaie après avoir rechargé la page.");
   }
-  await fetch("/api/push/subscribe", {
+  await request<{ ok: boolean }>("/api/push/subscribe", {
     method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-    body: JSON.stringify({ endpoint: json.endpoint, p256dh: json.keys?.p256dh, auth: json.keys?.auth, includeGradeValue }),
-  }).then((r) => {
-    if (!r.ok) throw new Error("Enregistrement de l'abonnement échoué.");
+    body: JSON.stringify({
+      endpoint: json.endpoint,
+      p256dh: json.keys?.p256dh,
+      auth: json.keys?.auth,
+      includeGradeValue,
+    }),
   });
 }
 
@@ -70,11 +76,7 @@ export async function unsubscribeFromPush(): Promise<void> {
   const registration = await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription();
   if (subscription) await subscription.unsubscribe();
-  await fetch("/api/push/subscribe", {
-    method: "DELETE",
-    credentials: "include",
-    headers: { "X-Requested-With": "XMLHttpRequest" },
-  });
+  await request<{ ok: boolean }>("/api/push/subscribe", { method: "DELETE" });
 }
 
 export async function getCurrentPushSubscription(): Promise<PushSubscription | null> {
@@ -93,29 +95,20 @@ export async function getCurrentPushSubscription(): Promise<PushSubscription | n
 }
 
 export async function getPushPreferences(): Promise<{ includeGradeValue: boolean }> {
-  const res = await fetch("/api/push/preferences", { credentials: "include" });
-  if (!res.ok) return { includeGradeValue: false };
-  return res.json();
+  try {
+    return await request<{ includeGradeValue: boolean }>("/api/push/preferences");
+  } catch {
+    return { includeGradeValue: false };
+  }
 }
 
 export async function updatePushPreferences(includeGradeValue: boolean): Promise<void> {
-  const res = await fetch("/api/push/preferences", {
+  await request<{ ok: boolean }>("/api/push/preferences", {
     method: "PUT",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
     body: JSON.stringify({ includeGradeValue }),
   });
-  if (!res.ok) throw new Error("Mise à jour des préférences échouée.");
 }
 
 export async function sendTestPush(): Promise<void> {
-  const res = await fetch("/api/push/test", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? "Envoi du test échoué.");
-  }
+  await request<{ ok: boolean }>("/api/push/test", { method: "POST" });
 }

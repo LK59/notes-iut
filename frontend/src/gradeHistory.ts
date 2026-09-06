@@ -50,8 +50,8 @@ function snapshots(releve: Releve): Map<number, GradeSnapshot> {
       for (const evaluation of mod.evaluations ?? []) {
         out.set(evaluation.id, {
           evaluationId: evaluation.id,
-          moduleLabel: `${moduleCode} - ${mod.titre || moduleCode}`,
-          evaluationLabel: evaluation.description || "Evaluation",
+          moduleLabel: `${moduleCode} — ${mod.titre || moduleCode}`,
+          evaluationLabel: evaluation.description || "Évaluation",
           value: numericNoteValue(evaluation.note.value),
         });
       }
@@ -99,5 +99,23 @@ export function recordGradeHistory(semestreId: string, previous: Releve | null, 
 
 export function getGradeHistory(semestreId: string | null): GradeHistoryItem[] {
   return semestreId ? loadHistory(semestreId) : [];
+}
+
+/** Fenêtre au-delà de laquelle une note découverte n'est plus « récente ». */
+export const RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Notes découvertes dans les derniers jours.
+ *
+ * Le panneau d'historique occupait la première place du tableau de bord sans jamais
+ * expirer : des notes détectées deux semaines plus tôt restaient en tête de page.
+ * L'historique complet reste stocké (80 entrées) ; seule sa mise en avant est datée.
+ */
+export function recentGradeHistory(items: GradeHistoryItem[]): GradeHistoryItem[] {
+  const cutoff = Date.now() - RECENT_WINDOW_MS;
+  return items.filter((item) => {
+    const discovered = new Date(item.discoveredAt).getTime();
+    return Number.isFinite(discovered) && discovered >= cutoff;
+  });
 }
 

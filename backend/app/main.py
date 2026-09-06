@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -223,10 +224,24 @@ app.include_router(push.router)
 if FRONTEND_DIST.is_dir():
     app.mount("/assets", _ImmutableStaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
+    # Polices auto-hébergées (la CSP interdit font-src externe). Servies par StaticFiles
+    # plutôt que par le fallback SPA : celui-ci les renvoyait en text/plain avec
+    # "no-store", donc retéléchargées à chaque navigation. Leur contenu ne change jamais
+    # sans changement de nom de fichier, d'où le même Cache-Control immutable que les assets.
+    fonts_dir = FRONTEND_DIST / "fonts"
+    if fonts_dir.is_dir():
+        mimetypes.add_type("font/woff2", ".woff2")
+        app.mount("/fonts", _ImmutableStaticFiles(directory=fonts_dir), name="fonts")
+
     DIST_ROOT = FRONTEND_DIST.resolve()
 
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str):
+        # Sans ça, une route /api inexistante (faute de frappe, endpoint retiré) renvoyait
+        # index.html avec un 200 : côté client, resp.ok était vrai et resp.json() levait une
+        # SyntaxError incompréhensible au lieu d'une erreur 404 exploitable.
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Ressource introuvable.")
         headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
         candidate = (FRONTEND_DIST / full_path).resolve()
         if full_path and candidate.is_relative_to(DIST_ROOT) and candidate.is_file():
