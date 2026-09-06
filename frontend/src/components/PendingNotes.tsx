@@ -43,6 +43,7 @@ export default function PendingNotes({ items, overrides, onChange }: Props) {
             </div>
             <NoteInput
               value={overrides[item.key]}
+              simulated={item.key in overrides}
               placeholder="note"
               ariaLabel={`Note estimée pour ${item.evalLabel}`}
               onChange={(value) => onChange(item.key, value)}

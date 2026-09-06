@@ -21,7 +21,7 @@ export const SECTION_LABEL = Object.fromEntries(
 
 export default function SectionNav() {
   const [active, setActive] = useState<string>(SECTIONS[0].id);
-  const railRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
 
   // Section courante mise en évidence : sans ça, la barre était un simple rail de
   // raccourcis sans état, empilé juste sous la bascule de vue — deux barres
@@ -47,14 +47,30 @@ export default function SectionNav() {
   }, []);
 
   // Garde la pastille active visible quand le rail déborde horizontalement.
+  //
+  // Le défilement est appliqué au rail lui-même, jamais via scrollIntoView : celui-ci
+  // remonte TOUS les ancêtres scrollables, la page comprise. Comme la barre sort du
+  // champ dès qu'on descend, chaque changement de section active ramenait la fenêtre
+  // vers le haut — la page se battait contre l'utilisateur et devenait impossible à
+  // faire défiler en vue Détaillé.
   useEffect(() => {
-    const button = railRef.current?.querySelector<HTMLElement>(`[data-section="${active}"]`);
-    button?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+    const rail = railRef.current;
+    if (!rail || rail.scrollWidth <= rail.clientWidth) return;
+    const button = rail.querySelector<HTMLElement>(`[data-section="${active}"]`);
+    if (!button) return;
+    const railBox = rail.getBoundingClientRect();
+    const buttonBox = button.getBoundingClientRect();
+    const delta = buttonBox.left - railBox.left - (railBox.width - buttonBox.width) / 2;
+    rail.scrollTo({ left: rail.scrollLeft + delta, behavior: "smooth" });
   }, [active]);
 
   return (
-    <nav aria-label="Sections" className="-mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto no-scrollbar print:hidden">
-      <div ref={railRef} className="flex gap-1.5 pb-0.5">
+    <nav
+      ref={railRef}
+      aria-label="Sections"
+      className="-mx-4 sm:mx-0 px-4 sm:px-0 overflow-x-auto no-scrollbar print:hidden"
+    >
+      <div className="flex gap-1.5 pb-0.5">
         {SECTIONS.map((section) => {
           const isActive = section.id === active;
           return (
@@ -66,9 +82,7 @@ export default function SectionNav() {
                 document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
               className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-medium transition-colors ${
-                isActive
-                  ? "bg-accent-soft text-accent"
-                  : "text-muted hover:bg-inset hover:text-fg"
+                isActive ? "bg-accent-soft text-accent" : "text-muted hover:bg-inset hover:text-fg"
               }`}
             >
               {section.label}

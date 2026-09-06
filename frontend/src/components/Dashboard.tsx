@@ -220,7 +220,7 @@ export default function Dashboard({
         moyenneGenerale={moyenneSimulee}
       />
 
-      <main className="print:hidden max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
+      <main className="print:hidden max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 overflow-x-hidden">
         {view === "complet" && <SectionNav />}
 
         {(!online || cacheFallback === "offline") && (

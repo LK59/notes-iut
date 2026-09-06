@@ -1,8 +1,7 @@
 import type { Releve } from "../types";
 import { fmt, moduleAggregate, moduleIsSimulated, moduleWeightInUe, ueWeightInGlobal } from "../simulator";
-import { Grade, Panel } from "./ui";
+import { comparedToClass, Grade, Panel } from "./ui";
 import { SECTION_LABEL } from "./SectionNav";
-import { comparedToClass } from "./SimpleView";
 
 /**
  * Récapitulatif matière par matière, avec le poids exact de chacune dans la moyenne

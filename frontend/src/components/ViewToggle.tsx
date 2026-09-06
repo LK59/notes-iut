@@ -28,7 +28,7 @@ export default function ViewToggle({
     <div
       role="tablist"
       aria-label="Mode d'affichage"
-      className="relative grid grid-cols-3 w-full sm:w-auto sm:min-w-[19rem] rounded-lg bg-inset p-1 text-sm"
+      className="relative grid grid-cols-3 flex-1 min-w-0 sm:flex-none sm:w-[19rem] rounded-lg bg-inset p-1 text-sm"
     >
       <span
         aria-hidden="true"

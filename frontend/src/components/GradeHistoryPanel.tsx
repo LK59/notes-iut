@@ -21,14 +21,18 @@ function fmtDate(value: string): string {
  */
 export default function GradeHistoryPanel({ items }: { items: GradeHistoryItem[] }) {
   const recent = recentGradeHistory(items);
-  const [open, setOpen] = useState(recent.length > 0 && recent.length <= 3);
+  // null = l'utilisateur n'a pas encore tranché, on décide d'après le contenu. Un
+  // useState initialisé une seule fois ne marchait pas ici : au premier rendu la liste
+  // est toujours vide (elle est remplie par un effet), donc le panneau restait replié.
+  const [userToggled, setUserToggled] = useState<boolean | null>(null);
+  const open = userToggled ?? recent.length <= 3;
 
   if (recent.length === 0) return null;
 
   return (
     <Card className="border-pos/40 bg-pos-soft/40 overflow-hidden">
       <button
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setUserToggled(!open)}
         aria-expanded={open}
         className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-pos-soft/60 transition-colors"
       >

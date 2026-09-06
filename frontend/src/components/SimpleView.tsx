@@ -12,7 +12,7 @@ import {
   ueWeightInGlobal,
 } from "../simulator";
 import Chip from "./Chip";
-import { Card, Chevron, Collapsible, Grade } from "./ui";
+import { Card, Chevron, Collapsible, comparedToClass, Grade } from "./ui";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
@@ -113,12 +113,9 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Grade
-                  value={fmt(aggregate.value)}
-                  size="lg"
-                  simulated={simulated}
-                  state={comparedToClass(aggregate.value, aggregate.moy)}
-                />
+                {/* Neutre : la puce « simulé » et la moyenne de classe disent déjà
+                    ce qu'il faut, colorer aussi le nombre noyait le signal. */}
+                <Grade value={fmt(aggregate.value)} size="lg" />
                 <Chevron open={ueOpen} className="text-subtle" />
               </div>
             </button>
@@ -153,12 +150,7 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                               ×{toNumber(coef, 1).toFixed(1)}
                             </span>
                           )}
-                          <Grade
-                            value={fmt(modAgg.value)}
-                            size="sm"
-                            simulated={modSimulated}
-                            state={comparedToClass(modAgg.value, modAgg.moy)}
-                          />
+                          <Grade value={fmt(modAgg.value)} size="sm" />
                         </span>
                       </div>
 
@@ -227,17 +219,4 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
       })}
     </div>
   );
-}
-
-/** La couleur d'une note encode sa position vis-à-vis de la moyenne de classe — donc
- * une information, pas une décoration. Neutre quand la comparaison n'est pas possible. */
-export function comparedToClass(
-  value: number | null | undefined,
-  classAverage: number | null | undefined
-): "neutral" | "above" | "below" {
-  if (value === null || value === undefined || classAverage === null || classAverage === undefined) {
-    return "neutral";
-  }
-  if (Math.abs(value - classAverage) < 0.005) return "neutral";
-  return value > classAverage ? "above" : "below";
 }

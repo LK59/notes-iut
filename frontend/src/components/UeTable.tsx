@@ -16,7 +16,6 @@ import {
 } from "../simulator";
 import Chip from "./Chip";
 import { Card, Chevron, Collapsible, Grade, NoteInput } from "./ui";
-import { comparedToClass } from "./SimpleView";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
@@ -126,12 +125,9 @@ function UeTable({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Grade
-            value={fmt(aggregate.value)}
-            size="lg"
-            simulated={simulated}
-            state={comparedToClass(aggregate.value, aggregate.moy)}
-          />
+          {/* Agrégat : neutre. L'état « simulé » est déjà porté par la puce et la
+              bordure de la carte, et la moyenne de classe est affichée juste au-dessus. */}
+          <Grade value={fmt(aggregate.value)} size="lg" />
           <Chevron open={isOpen} className="text-subtle print:hidden" />
         </div>
       </button>
@@ -199,12 +195,7 @@ function UeTable({
                                   classe {fmt(modAgg.moy)}
                                 </span>
                               )}
-                              <Grade
-                                value={fmt(modAgg.value)}
-                                size="sm"
-                                simulated={modSimulated}
-                                state={comparedToClass(modAgg.value, modAgg.moy)}
-                              />
+                              <Grade value={fmt(modAgg.value)} size="sm" />
                             </span>
                           </div>
 
@@ -264,9 +255,10 @@ function UeTable({
                                             {value ?? "—"}
                                           </span>
                                           <NoteInput
-                                            value={overridden ? overrides[key] : undefined}
-                                            placeholder={realValue === null ? "à venir" : realValue.toFixed(2)}
-                                            ariaLabel={`Note simulée pour ${evaluation.description || "cette évaluation"}`}
+                                            value={value}
+                                            simulated={overridden}
+                                            placeholder="à venir"
+                                            ariaLabel={`Note pour ${evaluation.description || "cette évaluation"}`}
                                             onChange={(next) => onChange(key, next)}
                                           />
                                         </span>
@@ -299,7 +291,8 @@ function UeTable({
                               </span>
                               <NoteInput
                                 value={overrides[manualKey(group, moduleCode)]}
-                                placeholder="simuler"
+                                simulated={manualKey(group, moduleCode) in overrides}
+                                placeholder="note"
                                 ariaLabel={`Note simulée pour le module ${mod.titre || moduleCode}`}
                                 onChange={(next) => onChange(manualKey(group, moduleCode), next)}
                               />

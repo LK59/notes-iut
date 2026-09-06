@@ -48,13 +48,20 @@ export function useAnchoredPopover<T extends HTMLElement = HTMLButtonElement>(
   useEffect(() => {
     if (!open) return;
     const onGeometryChange = () => place();
+    // En phase de capture pour suivre l'ancre quel que soit le conteneur qui défile —
+    // mais le panneau est lui-même défilable, et faire défiler son contenu n'a aucune
+    // raison de le repositionner (un rendu par évènement de défilement, pour rien).
+    const onScroll = (event: Event) => {
+      if (panelRef.current?.contains(event.target as Node)) return;
+      place();
+    };
     window.addEventListener("resize", onGeometryChange);
     window.addEventListener("orientationchange", onGeometryChange);
-    window.addEventListener("scroll", onGeometryChange, true);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       window.removeEventListener("resize", onGeometryChange);
       window.removeEventListener("orientationchange", onGeometryChange);
-      window.removeEventListener("scroll", onGeometryChange, true);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open, place]);
 

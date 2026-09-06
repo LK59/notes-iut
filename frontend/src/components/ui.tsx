@@ -108,15 +108,18 @@ export function Collapsible({
   id?: string;
   children: ReactNode;
 }) {
+  // Transition sur grid-template-rows (0fr → 1fr) plutôt que sur une hauteur maximale
+  // arbitraire : celle-ci devait être devinée à l'avance, et tronquait silencieusement
+  // le contenu des UE les plus fournies une fois le seuil dépassé.
   return (
     <div
       id={id}
       aria-hidden={!open}
-      className={`overflow-hidden transition-all duration-200 ease-out ${
-        open ? "max-h-[6000px] opacity-100" : "max-h-0 opacity-0"
+      className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
       }`}
     >
-      {children}
+      <div className="min-h-0 overflow-hidden">{children}</div>
     </div>
   );
 }
@@ -174,22 +177,26 @@ export function Button({
 /* ── Saisie de note ───────────────────────────────────────────────────────── */
 
 /**
- * Champ de note 0-20. `inputMode="decimal"` ouvre le pavé numérique sur mobile ;
- * l'état "simulé" est signalé par la couleur dédiée aux valeurs inventées, jamais
- * réutilisée ailleurs dans l'app.
+ * Champ de note 0-20. `inputMode="decimal"` ouvre le pavé numérique sur mobile.
+ *
+ * `simulated` est distinct de « le champ a une valeur » : une note réelle s'affiche
+ * comme une valeur normale, seule une note inventée prend la couleur dédiée aux
+ * valeurs simulées. Afficher la note réelle en simple texte indicatif la faisait
+ * passer pour un champ vide.
  */
 export function NoteInput({
   value,
   onChange,
+  simulated = false,
   placeholder = "—",
   ariaLabel,
 }: {
   value: number | undefined;
   onChange: (value: number | undefined) => void;
+  simulated?: boolean;
   placeholder?: string;
   ariaLabel: string;
 }) {
-  const filled = value !== undefined;
   return (
     <input
       type="number"
@@ -205,8 +212,8 @@ export function NoteInput({
         const raw = event.target.value;
         onChange(raw === "" ? undefined : Number(raw));
       }}
-      className={`print:hidden w-[4.5rem] shrink-0 rounded-lg border px-2 py-1 text-sm text-right mono transition-colors ${
-        filled
+      className={`print:hidden w-[5.25rem] shrink-0 rounded-lg border px-2 py-1 text-sm text-right mono transition-colors ${
+        simulated
           ? "border-sim/60 bg-sim-soft text-sim font-medium"
           : "border-line-strong bg-surface text-fg placeholder:text-subtle"
       }`}
@@ -248,4 +255,17 @@ export function Grade({
       {value}
     </span>
   );
+}
+
+/** La couleur d'une note encode sa position vis-à-vis de la moyenne de classe — donc
+ * une information, pas une décoration. Neutre quand la comparaison est impossible. */
+export function comparedToClass(
+  value: number | null | undefined,
+  classAverage: number | null | undefined
+): "neutral" | "above" | "below" {
+  if (value === null || value === undefined || classAverage === null || classAverage === undefined) {
+    return "neutral";
+  }
+  if (Math.abs(value - classAverage) < 0.005) return "neutral";
+  return value > classAverage ? "above" : "below";
 }

@@ -205,7 +205,13 @@ async def security_headers(request: Request, call_next):
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; "
         "font-src 'self'; "
-        "connect-src 'self'"
+        "connect-src 'self'; "
+        # Durcissements sans effet sur l'app : aucun plugin, aucune <base>, et
+        # l'app n'a jamais vocation à être encadrée dans une autre page.
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
     )
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "private, no-store"
