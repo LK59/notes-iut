@@ -76,7 +76,7 @@
 
   --c-fg: 22 24 28;
   --c-muted: 92 96 105;
-  --c-subtle: 139 143 152;
+  --c-subtle: 105 110 120;
 
   --c-accent: 67 56 202;
   --c-accent-hover: 55 48 163;
@@ -87,7 +87,7 @@
   --c-pos-soft: 223 243 234;
   --c-neg: 193 44 60;
   --c-neg-soft: 253 231 233;
-  --c-warn: 161 98 7;
+  --c-warn: 150 90 6;
   --c-warn-soft: 254 243 214;
 
   /* Notes simulées : une teinte à part, jamais utilisée ailleurs, pour qu'un
@@ -107,7 +107,7 @@
 
   --c-fg: 236 238 242;
   --c-muted: 154 161 173;
-  --c-subtle: 107 114 128;
+  --c-subtle: 138 145 156;
 
   --c-accent: 165 180 252;
   --c-accent-hover: 199 210 254;
@@ -164,14 +164,19 @@
     -moz-appearance: textfield;
   }
 
+  /* Le chevron d'un <select> ne peut pas hériter de currentColor depuis une data URI :
+     il est décliné par thème, sinon il restait gris foncé sur fond sombre. */
   select {
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23696e78'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z' clip-rule='evenodd'/%3E%3C/svg%3E");
     background-position: right 0.5rem center;
     background-repeat: no-repeat;
     background-size: 1.1em;
     -webkit-appearance: none;
     appearance: none;
     padding-right: 2rem;
+  }
+  :root.dark select {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%238a919c'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.084l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.25 4.42a.75.75 0 0 1-1.08 0l-4.25-4.42a.75.75 0 0 1 .02-1.06Z' clip-rule='evenodd'/%3E%3C/svg%3E");
   }
 }
 

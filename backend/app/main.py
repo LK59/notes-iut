@@ -90,6 +90,16 @@ class _BrotliMiddleware:
         await self.app(scope, receive, responder)
 
 
+# Types déjà compressés par nature : les recompresser coûte du CPU (et de la mémoire,
+# la réponse étant mise en tampon en entier) pour un gain nul, voire négatif. Concerne
+# surtout /api/bulletin-pdf et /api/photo, les deux plus grosses réponses de l'app.
+_INCOMPRESSIBLE_PREFIXES = ("image/", "video/", "audio/", "font/", "application/pdf", "application/zip")
+
+
+def _is_incompressible(content_type: str) -> bool:
+    return content_type.split(";")[0].strip().lower().startswith(_INCOMPRESSIBLE_PREFIXES)
+
+
 class _BrotliResponder:
     def __init__(self, send: Send, minimum_size: int, quality: int) -> None:
         self._send = send
@@ -108,7 +118,11 @@ class _BrotliResponder:
                 return
             body = b"".join(self._chunks)
             headers = MutableHeaders(raw=list(self._start.get("headers", [])))
-            if len(body) >= self.minimum_size and not headers.get("content-encoding"):
+            if (
+                len(body) >= self.minimum_size
+                and not headers.get("content-encoding")
+                and not _is_incompressible(headers.get("content-type", ""))
+            ):
                 compressed = _brotli.compress(body, quality=self.quality)
                 if len(compressed) < len(body):
                     headers["content-encoding"] = "br"
