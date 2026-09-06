@@ -12,6 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import cache
@@ -170,8 +171,14 @@ async def app_error_handler(request: Request, exc: AppError):
     )
 
 
-@app.exception_handler(HTTPException)
-async def http_error_handler(request: Request, exc: HTTPException):
+# Enregistré sur l'exception de Starlette, dont celle de FastAPI hérite : un seul
+# handler couvre donc les deux. Enregistré sur celle de FastAPI seule, il laissait
+# passer les 404 levées par le routeur lui-même (route inexistante), qui repartaient
+# avec le format par défaut `{"detail": "Not Found"}` au lieu de l'enveloppe d'erreur
+# de l'app. Cas visible uniquement quand frontend/dist est absent — donc en CI, et
+# pas en local où le fallback SPA attrapait la requête avant le routeur.
+@app.exception_handler(StarletteHTTPException)
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
     detail = exc.detail if isinstance(exc.detail, str) else "Erreur HTTP."
     code = "SESSION_EXPIRED" if exc.status_code == 401 else "HTTP_ERROR"
     if exc.status_code == 429:

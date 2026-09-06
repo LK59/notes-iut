@@ -19,9 +19,13 @@ def test_security_headers_present(client):
 
 
 def test_unknown_api_route_returns_json_404(client):
-    """Le fallback SPA attrape tout ce qui n'a pas matché. Sans exclusion explicite de
-    /api, une route inexistante renvoyait index.html avec un 200 : côté client resp.ok
-    était vrai et resp.json() levait une SyntaxError au lieu d'une erreur exploitable."""
+    """Une route /api inexistante doit renvoyer l'enveloppe d'erreur de l'app, que
+    frontend/dist soit construit ou non.
+
+    Deux chemins mènent ici selon la présence du build : le fallback SPA (qui doit
+    exclure /api, sinon il renvoyait index.html avec un 200 — resp.ok vrai côté client
+    et resp.json() levant une SyntaxError), ou le routeur lui-même. Les deux passent
+    désormais par le même handler d'exception, d'où ce test valable dans les deux cas."""
     resp = client.get("/api/route-qui-nexiste-pas")
     assert resp.status_code == 404
     assert resp.headers["content-type"].startswith("application/json")
