@@ -15,6 +15,15 @@ interface ReleveResult {
   previous: Releve | null;
 }
 
+function countEvaluations(releve: Releve | undefined): number {
+  if (!releve) return 0;
+  let total = 0;
+  for (const group of ["ressources", "saes"] as const) {
+    for (const mod of Object.values(releve[group] || {})) total += mod.evaluations?.length ?? 0;
+  }
+  return total;
+}
+
 async function fetchReleve(semestreId: string, refresh = false): Promise<ReleveResult> {
   // Capture la valeur précédente AVANT que withOfflineFallback l'écrase dans le cache localStorage.
   const previous = cacheGet<ReleveResponse>(`releve:${semestreId}`)?.relevé ?? null;
@@ -39,14 +48,14 @@ export function useReleveData(view: ViewMode) {
   });
 
   // Initialise semestreId et pré-alimente le cache React Query avec le relevé inclus dans
-  // la réponse bootstrap pour éviter un second appel réseau sur le semestre courant.
+  // la réponse bootstrap (celui du dernier semestre) pour éviter un second appel réseau.
   useEffect(() => {
     if (!bootstrap) return;
-    if (!semestreId) {
-      setSemestreId(bootstrap.semestres[bootstrap.semestres.length - 1]?.formsemestre_id ?? null);
-    }
-    if (bootstrap.relevé && bootstrap.semestres.length > 0) {
-      const sid = bootstrap.semestres[bootstrap.semestres.length - 1].formsemestre_id;
+    const semestres = bootstrap.semestres;
+    const last = semestres[semestres.length - 1];
+
+    if (bootstrap.relevé && last) {
+      const sid = last.formsemestre_id;
       if (!queryClient.getQueryData(["releve", sid])) {
         const previous = cacheGet<ReleveResponse>(`releve:${sid}`)?.relevé ?? null;
         queryClient.setQueryData<ReleveResult>(["releve", sid], {
@@ -56,6 +65,16 @@ export function useReleveData(view: ViewMode) {
         });
         cacheSet(`releve:${sid}`, { relevé: bootstrap.relevé, absences: bootstrap.absences });
       }
+    }
+
+    if (!semestreId) {
+      // À la rentrée, ScoDoc crée le formsemestre de la nouvelle année dès l'inscription :
+      // il est vide, et c'est pourtant lui le dernier de la liste. S'ouvrir dessus affichait
+      // un semestre sans aucune note pendant des semaines, alors que les notes continuaient
+      // de tomber sur le semestre précédent (notes tardives, rattrapages, jurys).
+      const lastIsEmpty = Boolean(bootstrap.relevé) && countEvaluations(bootstrap.relevé) === 0;
+      const fallback = semestres[semestres.length - 2];
+      setSemestreId((lastIsEmpty && fallback ? fallback : last)?.formsemestre_id ?? null);
     }
   }, [bootstrap]);
 

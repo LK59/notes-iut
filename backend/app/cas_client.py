@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from typing import Callable
 
 import requests
 from bs4 import BeautifulSoup
 
 from .errors import (
+    CasAuthenticationRefused,
     CasUnexpectedResponse,
     CasUnavailable,
     InvalidCredentials,
@@ -48,18 +50,25 @@ DEFAULT_HEADERS = {
 class ScodocSession:
     session: requests.Session
     bootstrap_data: dict | None = None
+    # requests.Session n'est pas thread-safe (jar de cookies et pool de connexions partagés)
+    # et la même instance est utilisée par plusieurs threads : le prefetch des relevés lancé
+    # en BackgroundTask tourne pendant que le client enchaîne sa requête suivante, et le
+    # polling push réutilise la session persistée. Un verrou par session suffit : les appels
+    # au portail d'un même utilisateur n'ont aucune raison d'être parallèles.
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def post_data(self, query: str, **params) -> dict:
         # data.php lit ses paramètres via $_GET (même en POST) : il faut donc les
         # passer en query string, pas dans le corps de la requête.
         url = f"{SITE_BASE}/services/data.php"
         try:
-            resp = self.session.post(
-                url,
-                params={"q": query, **params},
-                headers={"Content-type": "application/x-www-form-urlencoded"},
-                timeout=20,
-            )
+            with self._lock:
+                resp = self.session.post(
+                    url,
+                    params={"q": query, **params},
+                    headers={"Content-type": "application/x-www-form-urlencoded"},
+                    timeout=20,
+                )
             resp.raise_for_status()
         except requests.Timeout as exc:
             raise ScodocUnavailable("Le portail de notes met trop de temps a repondre.") from exc
@@ -94,11 +103,12 @@ class ScodocSession:
 
     def bulletin_pdf(self, formsemestre_id: str, type_: str = "BUT") -> bytes:
         """Bulletin officiel généré par ScoDoc (pas notre export navigateur) — si l'admin l'autorise."""
-        resp = self.session.get(
-            f"{SITE_BASE}/services/bulletin_PDF.php",
-            params={"sem_id": formsemestre_id, "type": type_},
-            timeout=30,
-        )
+        with self._lock:
+            resp = self.session.get(
+                f"{SITE_BASE}/services/bulletin_PDF.php",
+                params={"sem_id": formsemestre_id, "type": type_},
+                timeout=30,
+            )
         resp.raise_for_status()
         if not resp.content.startswith(b"%PDF"):
             message = resp.text.strip() or "Le portail n'a pas renvoyé de PDF valide."
@@ -107,13 +117,36 @@ class ScodocSession:
 
     def student_photo(self) -> tuple[bytes, str]:
         """Photo de l'étudiant connecté (accessible pour soi-même sans droits particuliers)."""
-        resp = self.session.post(
-            f"{SITE_BASE}/services/data.php",
-            params={"q": "getStudentPic"},
-            timeout=20,
-        )
+        with self._lock:
+            resp = self.session.post(
+                f"{SITE_BASE}/services/data.php",
+                params={"q": "getStudentPic"},
+                timeout=20,
+            )
         resp.raise_for_status()
         return resp.content, resp.headers.get("Content-Type", "image/jpeg")
+
+
+# Messages du CAS qui signifient réellement « identifiant ou mot de passe incorrect ».
+# Tout le reste (compte verrouillé/désactivé, mot de passe expiré, MFA exigé, maintenance)
+# n'est PAS une preuve que le mot de passe mémorisé est faux : cf. CasAuthenticationRefused.
+_INVALID_CREDENTIALS_MARKERS = (
+    "informations d'identification",  # message standard d'Apereo CAS en français
+    "cannot be determined to be authentic",
+    "identifiant ou mot de passe",
+    "nom d'utilisateur ou mot de passe",
+    "login ou mot de passe",
+    "identifiants incorrects",
+    "mot de passe incorrect",
+    "mot de passe erron",
+    "invalid credentials",
+    "username or password",
+)
+
+
+def _is_invalid_credentials_message(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _INVALID_CREDENTIALS_MARKERS)
 
 
 def _extract_cas_error(html: str) -> str:
@@ -219,7 +252,12 @@ def login(username: str, password: str, on_stage: "Callable[[str], None] | None"
                 resp.text[:1500],
             )
             raise CasUnexpectedResponse(message)
-        raise InvalidCredentials(message)
+        if _is_invalid_credentials_message(message):
+            raise InvalidCredentials(message)
+        # Refus explicite du CAS, mais pas pour cause de mot de passe erroné : on remonte le
+        # message tel quel à l'utilisateur sans déclencher la révocation des remember-tokens.
+        logger.warning("Refus CAS non lié aux identifiants : %r", message)
+        raise CasAuthenticationRefused(message)
 
     location = resp.headers.get("Location")
     if not location or "ticket=" not in location:

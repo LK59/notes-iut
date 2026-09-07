@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { autoLoginIfRemembered, me, setUnauthorizedHandler, type ReauthWarning } from "./api";
+import { autoLoginIfRemembered, isNetworkFailure, me, setUnauthorizedHandler, type ReauthWarning } from "./api";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./components/Dashboard";
 import PreviewApp from "./components/PreviewApp";
@@ -37,7 +37,12 @@ export default function App() {
         setIsAdmin(Boolean(refreshed?.isAdmin));
         setReauthWarning(null);
       })
-      .catch(() => {
+      .catch((err) => {
+        // Une panne réseau ne dit rien de l'état de la session : hors-ligne ou en 4G faible,
+        // /api/me échoue alors que la session serveur est parfaitement valide. Traiter ça
+        // comme une déconnexion renvoyait l'utilisateur sur l'écran de connexion à chaque
+        // sortie de veille dans le métro, et lui faisait perdre l'accès au cache hors-ligne.
+        if (isNetworkFailure(err)) return;
         setUsername(null);
         setIsAdmin(false);
         setReauthWarning(null);
@@ -46,6 +51,14 @@ export default function App() {
   }
 
   useEffect(checkAuth, []);
+
+  // Le réseau revient : c'est le moment de rattraper une vérification de session qu'on a
+  // volontairement laissée sans conclusion ci-dessus.
+  useEffect(() => {
+    const onOnline = () => checkAuth();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
 
   // iOS Safari restaure parfois la page depuis son cache (bfcache) après une navigation
   // arrière sans ré-exécuter les effets : on revérifie la session dans ce cas précis, sinon

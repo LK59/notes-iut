@@ -9,6 +9,11 @@ from .db import _connect
 WINDOW_SECONDS = 300
 MAX_ATTEMPTS_IP = 10
 MAX_ATTEMPTS_USER = 20
+# Wi-Fi de l'IUT, CGNAT mobile : des dizaines d'étudiants partagent une seule IP publique.
+# Un plafond de 10 par IP suffit pour du login interactif, mais pas pour une opération
+# déclenchée automatiquement (reconnexion silencieuse au réveil de la PWA) — d'où un
+# plafond IP volontairement large, le vrai verrou étant alors posé sur le token.
+MAX_ATTEMPTS_SHARED_IP = 60
 
 
 def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS_IP) -> bool:
@@ -35,3 +40,23 @@ def check_rate_limit(key: str, max_attempts: int = MAX_ATTEMPTS_IP) -> bool:
     )
     conn.commit()
     return True
+
+
+def purge_old_rate_limits() -> None:
+    """La table n'était jamais nettoyée : une ligne par IP et par compte, conservée
+    indéfiniment. Appelée par la boucle de ménage périodique (main.py)."""
+    cutoff = time.time() - WINDOW_SECONDS
+    conn = _connect()
+    stale = [
+        key
+        for key, raw in conn.execute("SELECT key, timestamps FROM rate_limit").fetchall()
+        if not [t for t in json.loads(raw) if t > cutoff]
+    ]
+    if not stale:
+        return
+    try:
+        conn.executemany("DELETE FROM rate_limit WHERE key = ?", [(key,) for key in stale])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

@@ -116,3 +116,93 @@ def test_admin_endpoint_forbidden_for_non_admin(client, api_headers):
         _login(client, api_headers, "toto", "secret")
     resp = client.get("/api/admin/status")
     assert resp.status_code == 403
+
+
+def test_login_status_reste_lisible_apres_une_premiere_lecture(client, api_headers):
+    """La réponse de statut qui porte le Set-Cookie peut se perdre en route (coupure 4G) :
+    le client doit pouvoir la redemander au lieu de recevoir « connexion inconnue » alors
+    que le login CAS a réussi."""
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        resp = client.post(
+            "/api/login",
+            json={"username": "toto", "password": "secret"},
+            headers=api_headers,
+        )
+        job_id = resp.json()["job_id"]
+        for _ in range(50):
+            first = client.get(f"/api/login/status/{job_id}", headers=api_headers)
+            if first.json().get("status") != "pending":
+                break
+            time.sleep(0.02)
+
+    assert first.json()["status"] == "ok"
+    again = client.get(f"/api/login/status/{job_id}", headers=api_headers)
+    assert again.status_code == 200
+    assert again.json() == first.json()
+    assert "sid" in again.cookies
+
+
+def test_logout_detache_labonnement_push_de_cet_appareil(client, api_headers):
+    """Sur un appareil partagé, l'abonnement restait rattaché au compte sortant : le
+    téléphone de l'étudiant suivant recevait les notifications de notes du précédent."""
+    from app import cache
+
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        _login(client, api_headers, "toto", "secret")
+    cache.upsert_push_subscription("toto", "https://push.example/telephone", "p", "a", "vapid", False)
+    cache.upsert_push_subscription("toto", "https://push.example/ordinateur", "p", "a", "vapid", False)
+
+    resp = client.post(
+        "/api/logout",
+        json={"pushEndpoint": "https://push.example/telephone"},
+        headers=api_headers,
+    )
+
+    assert resp.status_code == 200
+    assert cache.has_push_subscription("toto", "https://push.example/telephone") is False
+    assert cache.has_push_subscription("toto", "https://push.example/ordinateur") is True
+
+
+def test_desabonnement_push_ne_touche_que_lappareil_concerne(client, api_headers):
+    from app import cache
+
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        _login(client, api_headers, "toto", "secret")
+    cache.upsert_push_subscription("toto", "https://push.example/telephone", "p", "a", "vapid", False)
+    cache.upsert_push_subscription("toto", "https://push.example/ordinateur", "p", "a", "vapid", False)
+
+    resp = client.request(
+        "DELETE",
+        "/api/push/subscribe",
+        json={"endpoint": "https://push.example/ordinateur"},
+        headers=api_headers,
+    )
+
+    assert resp.status_code == 200
+    assert cache.has_push_subscription("toto", "https://push.example/telephone") is True
+    assert cache.has_push_subscription("toto", "https://push.example/ordinateur") is False
+
+
+def test_preferences_push_signalent_un_abonnement_inconnu_du_serveur(client, api_headers):
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        _login(client, api_headers, "toto", "secret")
+
+    resp = client.get(
+        "/api/push/preferences",
+        params={"endpoint": "https://push.example/orphelin"},
+        headers=api_headers,
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["subscribedHere"] is False
+
+
+def test_refresh_rate_limit_est_compte_par_token_pas_par_ip(client, api_headers):
+    """Derrière le Wi-Fi de l'IUT ou un CGNAT, toute une promo partage une IP : un plafond
+    de 10 par IP faisait tomber tout le monde sur « Trop de tentatives »."""
+    from app.ratelimit import MAX_ATTEMPTS_IP
+
+    for _ in range(MAX_ATTEMPTS_IP + 2):
+        resp = client.post("/api/refresh", headers=api_headers)
+        assert resp.status_code != 429
+    assert resp.json()["error"]["code"] == "REMEMBER_TOKEN_MISSING"

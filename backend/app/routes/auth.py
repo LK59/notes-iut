@@ -20,6 +20,7 @@ from ..deps import (
     COOKIE_REMEMBER,
     COOKIE_SID,
     LoginPayload,
+    LogoutPayload,
     _client_ip,
     _is_admin_username,
     _require_session,
@@ -30,7 +31,7 @@ from ..deps import (
 from ..errors import InvalidCredentials, RememberTokenDecryptError, RememberTokenInvalid, RememberTokenMissing
 from ..logging_utils import _log_event, _safe_hash
 from ..push_polling import _reauth_warning_for_username
-from ..ratelimit import check_rate_limit, MAX_ATTEMPTS_USER
+from ..ratelimit import check_rate_limit, MAX_ATTEMPTS_SHARED_IP, MAX_ATTEMPTS_USER
 from ..scodoc_payloads import validate_premiere_connexion_payload
 from ..sessions import create_session, delete_session, get_session
 
@@ -49,6 +50,12 @@ LOGIN_JOB_TTL_SECONDS = 180
 
 
 def _cleanup_login_jobs() -> None:
+    """Un job terminé n'est PAS supprimé à la première lecture de son statut : c'est cette
+    réponse-là qui porte le Set-Cookie de session, et si elle se perd (coupure 4G pile à cet
+    instant — exactement ce que l'architecture asynchrone cherche à absorber), le client
+    repollait et recevait un 404 « connexion inconnue » alors que le login CAS avait réussi.
+    Les jobs terminés restent donc lisibles, idempotents, jusqu'à leur TTL, et c'est ce
+    ménage périodique qui les retire."""
     cutoff = time.time() - LOGIN_JOB_TTL_SECONDS
     with _login_jobs_lock:
         stale = [job_id for job_id, job in _login_jobs.items() if job["created_at"] < cutoff]
@@ -123,8 +130,6 @@ def api_login(payload: LoginPayload, request: Request):
 def api_login_status(job_id: str, response: Response):
     with _login_jobs_lock:
         job = _login_jobs.get(job_id)
-        if job is not None and job["status"] != "pending":
-            del _login_jobs[job_id]
     if job is None:
         raise HTTPException(status_code=404, detail="Requête de connexion inconnue ou expirée.")
     if job["status"] == "pending":
@@ -164,11 +169,20 @@ def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, 
 def api_refresh(request: Request, response: Response):
     """Échange le cookie remember contre une nouvelle session sans ressaisie du mot de passe."""
     client_ip = _client_ip(request) or "unknown"
-    if not check_rate_limit(f"refresh:{client_ip}"):
+    token = request.cookies.get(COOKIE_REMEMBER)
+
+    # Le refresh est déclenché automatiquement (démarrage, 401, retour au premier plan de la
+    # PWA) : le limiter à 10 par IP suffisait à faire tomber toute une promo sur « Trop de
+    # tentatives » derrière le Wi-Fi de l'IUT ou un CGNAT mobile, où tout le monde partage
+    # une IP. Le vrai verrou est donc posé sur le token (valeur contrôlée par le serveur,
+    # donc un compte = un compteur), l'IP ne gardant qu'un plafond large de sécurité.
+    token_key = f"refresh:token:{_safe_hash(token)}" if token else f"refresh:anon:{client_ip}"
+    if not check_rate_limit(token_key, MAX_ATTEMPTS_USER) or not check_rate_limit(
+        f"refresh:{client_ip}", MAX_ATTEMPTS_SHARED_IP
+    ):
         _log_event("auth.refresh.rate_limited", ip_hash=_safe_hash(client_ip))
         raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes.")
 
-    token = request.cookies.get(COOKIE_REMEMBER)
     if not token:
         _log_event("auth.refresh.missing_token", ip_hash=_safe_hash(client_ip))
         raise RememberTokenMissing()
@@ -200,8 +214,6 @@ def api_refresh(request: Request, response: Response):
 def api_refresh_status(job_id: str, response: Response):
     with _login_jobs_lock:
         job = _login_jobs.get(job_id)
-        if job is not None and job["status"] != "pending":
-            del _login_jobs[job_id]
     if job is None:
         raise HTTPException(status_code=404, detail="Requête de reconnexion inconnue ou expirée.")
     if job["status"] == "pending":
@@ -217,10 +229,15 @@ def api_refresh_status(job_id: str, response: Response):
 
 
 @router.post("/api/logout")
-def api_logout(request: Request, response: Response):
+def api_logout(request: Request, response: Response, payload: LogoutPayload | None = None):
     session = get_session(request.cookies.get(COOKIE_SID))
     if session is not None:
         cache.delete_user_cache(session.username)
+        # Sans ça, l'abonnement push restait rattaché au compte qui se déconnecte : sur un
+        # appareil partagé, l'étudiant suivant recevait les notifications de notes (valeur
+        # comprise) du précédent. Le client se désabonne de son côté avant d'appeler ici.
+        if payload is not None and payload.pushEndpoint:
+            cache.delete_push_subscription_for_user(session.username, payload.pushEndpoint)
     delete_session(request.cookies.get(COOKIE_SID))
     token = request.cookies.get(COOKIE_REMEMBER)
     if token:

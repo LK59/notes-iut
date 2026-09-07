@@ -15,6 +15,16 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * Vraie panne réseau (hors-ligne, timeout, coupure) par opposition à une réponse reçue du
+ * serveur. Une requête qui échoue faute de réseau ne prouve rien sur l'état de la session :
+ * la traiter comme un « non authentifié » renvoyait l'utilisateur sur l'écran de connexion
+ * au moindre réveil en 4G faible, alors que tout le cache hors-ligne était disponible.
+ */
+export function isNetworkFailure(err: unknown): boolean {
+  return !(err instanceof HttpError);
+}
+
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(fn: (() => void) | null) {
   onUnauthorized = fn;
@@ -98,7 +108,32 @@ function validateSemestresPayload(data: unknown): PremiereConnexionResponse {
       "Le portail de notes a renvoyé une réponse invalide. Réessaie dans quelques minutes."
     );
   }
-  return result.data as unknown as PremiereConnexionResponse;
+  return normalizeSemestres(result.data as unknown as PremiereConnexionResponse);
+}
+
+/**
+ * ScoDoc renvoie `formsemestre_id` en NOMBRE, alors que tout le client le manipule en
+ * chaîne (valeur d'un <select>, segment d'URL, clé de cache et de requête). Dès que
+ * l'utilisateur changeait de semestre, les comparaisons `===` échouaient en silence :
+ * plus de tendance vs semestre précédent, titre absent de l'export, semestre courant non
+ * exclu de la comparaison, et un second fetch du relevé déjà chargé. On normalise donc une
+ * fois pour toutes ici, à la frontière de l'API, plutôt que de rustiner chaque comparaison.
+ *
+ * L'ordre est rétabli au passage : la liste sert de source de vérité au semestre « courant »
+ * (le dernier), au semestre précédent et au graphique d'évolution, et rien ne garantit
+ * l'ordre côté portail (réinscription, redoublement, changement de formation).
+ */
+function normalizeSemestres(data: PremiereConnexionResponse): PremiereConnexionResponse {
+  const semestres = (data.semestres ?? [])
+    .map((s) => ({ ...s, formsemestre_id: String(s.formsemestre_id) }))
+    .sort((a, b) => {
+      const annee = String(a.annee_scolaire ?? "").localeCompare(String(b.annee_scolaire ?? ""));
+      if (annee !== 0) return annee;
+      const numero = Number(a.semestre_id ?? 0) - Number(b.semestre_id ?? 0);
+      if (numero !== 0) return numero;
+      return Number(a.formsemestre_id) - Number(b.formsemestre_id);
+    });
+  return { ...data, semestres };
 }
 
 function validateRelevePayload(data: unknown): ReleveResponse {
@@ -148,6 +183,11 @@ export function setCacheFallbackHandler(fn: ((reason: CacheFallbackReason | null
   onCacheFallback = fn;
 }
 
+/** Clé de cache qui a déclenché le bandeau en cours, pour qu'une requête secondaire qui
+ * réussit (les relevés de la vue Graphiques, par exemple) n'efface pas un bandeau
+ * « Hors ligne » posé par la donnée principale, toujours servie depuis le cache. */
+let cacheFallbackKey: string | null = null;
+
 /**
  * Network-first : on tente toujours le réseau d'abord. Le cache local n'est utilisé en repli
  * si on est hors-ligne, si fetch échoue avant d'obtenir une réponse HTTP (timeout, coupure),
@@ -160,14 +200,18 @@ async function withOfflineFallback<T>(cacheKey: string, fetcher: () => Promise<T
   try {
     const data = await fetcher();
     cacheSet(cacheKey, data);
-    onCacheFallback?.(null);
+    if (cacheFallbackKey === null || cacheFallbackKey === cacheKey) {
+      cacheFallbackKey = null;
+      onCacheFallback?.(null);
+    }
     return data;
   } catch (err) {
     const scodocDown = err instanceof HttpError && (err.status === 502 || err.status === 503);
-    const networkFailure = !navigator.onLine || !(err instanceof HttpError);
+    const networkFailure = !navigator.onLine || isNetworkFailure(err);
     if (networkFailure || scodocDown) {
       const cached = cacheGet<T>(cacheKey);
       if (cached) {
+        cacheFallbackKey = cacheKey;
         onCacheFallback?.(networkFailure ? "offline" : "scodoc_down");
         return cached;
       }
@@ -199,9 +243,18 @@ async function pollAuthJob(
 
   const deadline = Date.now() + AUTH_JOB_POLL_MAX_MS;
   for (;;) {
-    const res = await request<{ status: string; ok?: boolean; username?: string; isAdmin?: boolean; stage?: string }>(
-      `${statusPathPrefix}${job_id}`
-    );
+    let res: { status: string; ok?: boolean; username?: string; isAdmin?: boolean; stage?: string };
+    try {
+      res = await request(`${statusPathPrefix}${job_id}`);
+    } catch (err) {
+      // Une erreur du job lui-même arrive toujours comme HttpError (enveloppe d'erreur du
+      // backend) : elle doit remonter telle quelle. Une panne réseau sur un poll de statut,
+      // elle, ne dit rien du login en cours côté serveur — le faire échouer pour une coupure
+      // d'une seconde annulait un login qui avait déjà abouti.
+      if (!isNetworkFailure(err) || Date.now() > deadline) throw err;
+      await new Promise((resolve) => setTimeout(resolve, AUTH_JOB_POLL_INTERVAL_MS));
+      continue;
+    }
     if (res.status === "ok") {
       return { ok: true, username: res.username as string, isAdmin: res.isAdmin };
     }
@@ -226,15 +279,40 @@ export function login(username: string, password: string, remember = false, onSt
 }
 
 /**
- * Déconnexion : purge le stockage local (relevés, simulations, historique des notes)
- * ET les caches du service worker avant de fermer la session serveur. Les trois couches
- * doivent être vidées ensemble — sinon, sur un appareil partagé, l'étudiant suivant
- * retrouve les données du précédent.
+ * Coupe l'abonnement push de CET appareil et renvoie son endpoint (pour que le serveur
+ * détache la ligne correspondante). Volontairement local à ce module plutôt qu'importé de
+ * pushNotifications.ts, qui dépend lui-même de request() d'ici.
+ */
+async function unsubscribeLocalPush(): Promise<string | null> {
+  try {
+    if (!("serviceWorker" in navigator)) return null;
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager.getSubscription();
+    if (!subscription) return null;
+    const { endpoint } = subscription;
+    await subscription.unsubscribe().catch(() => {});
+    return endpoint;
+  } catch {
+    return null; // best effort : la déconnexion ne doit jamais échouer là-dessus
+  }
+}
+
+/**
+ * Déconnexion : purge le stockage local (relevés, simulations, historique des notes), les
+ * caches du service worker ET l'abonnement aux notifications, avant de fermer la session
+ * serveur. Les quatre couches doivent être vidées ensemble — sinon, sur un appareil partagé,
+ * l'étudiant suivant retrouve les données du précédent : l'abonnement push restait rattaché
+ * au compte sortant, et son téléphone recevait les notifications de notes (valeur comprise)
+ * de quelqu'un d'autre.
  */
 export async function logout() {
+  const pushEndpoint = await unsubscribeLocalPush();
   clearCache();
   await clearServiceWorkerCaches();
-  return request<{ ok: boolean }>("/api/logout", { method: "POST" });
+  return request<{ ok: boolean }>("/api/logout", {
+    method: "POST",
+    body: JSON.stringify({ pushEndpoint }),
+  });
 }
 
 export type ReauthWarning = "idle" | "absolute" | null;

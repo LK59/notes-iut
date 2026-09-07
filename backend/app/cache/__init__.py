@@ -10,7 +10,9 @@ from __future__ import annotations
 from .db import DB_PATH, VAPID_KEYS_PATH, check_database
 from .push import (
     delete_push_subscription_by_endpoint,
+    delete_push_subscription_for_user,
     delete_push_subscriptions,
+    has_push_subscription,
     get_grade_snapshot,
     get_push_poll_state,
     get_push_preferences,
@@ -24,7 +26,14 @@ from .push import (
     set_push_include_grade_value,
     upsert_push_subscription,
 )
-from .ratelimit import MAX_ATTEMPTS_IP, MAX_ATTEMPTS_USER, WINDOW_SECONDS, check_rate_limit
+from .ratelimit import (
+    MAX_ATTEMPTS_IP,
+    MAX_ATTEMPTS_SHARED_IP,
+    MAX_ATTEMPTS_USER,
+    WINDOW_SECONDS,
+    check_rate_limit,
+    purge_old_rate_limits,
+)
 from .remember import (
     MAX_REMEMBER_TOKENS_PER_USER,
     REMEMBER_EVENTS_RETENTION_SECONDS,
@@ -57,6 +66,7 @@ from .semestres import (
     delete_user_cache,
     get_releve,
     get_semestres,
+    get_semestres_with_age,
     set_releve,
     set_semestres,
 )
@@ -83,6 +93,7 @@ __all__ = [
     "RELEVE_CURRENT_TTL",
     "RELEVE_ARCHIVED_TTL",
     "get_semestres",
+    "get_semestres_with_age",
     "set_semestres",
     "delete_semestres",
     "get_releve",
@@ -120,6 +131,8 @@ __all__ = [
     "upsert_push_subscription",
     "delete_push_subscriptions",
     "delete_push_subscription_by_endpoint",
+    "delete_push_subscription_for_user",
+    "has_push_subscription",
     "set_push_include_grade_value",
     "get_push_preferences",
     "get_push_subscriptions",
@@ -134,5 +147,7 @@ __all__ = [
     "WINDOW_SECONDS",
     "MAX_ATTEMPTS_IP",
     "MAX_ATTEMPTS_USER",
+    "MAX_ATTEMPTS_SHARED_IP",
     "check_rate_limit",
+    "purge_old_rate_limits",
 ]

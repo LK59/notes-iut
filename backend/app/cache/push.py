@@ -42,6 +42,32 @@ def delete_push_subscriptions(username: str) -> None:
         raise
 
 
+def delete_push_subscription_for_user(username: str, endpoint: str) -> int:
+    """Supprime le seul abonnement de cet appareil. delete_push_subscriptions() supprimait
+    toutes les lignes du compte : couper les notifications sur le PC les coupait aussi sur
+    le téléphone, dont l'interface continuait pourtant d'afficher « activées »."""
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "DELETE FROM push_subscriptions WHERE username = ? AND endpoint = ?",
+            (username, endpoint),
+        )
+        conn.commit()
+        return cursor.rowcount or 0
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def has_push_subscription(username: str, endpoint: str) -> bool:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM push_subscriptions WHERE username = ? AND endpoint = ?",
+        (username, endpoint),
+    ).fetchone()
+    return row is not None
+
+
 def delete_push_subscription_by_endpoint(endpoint: str) -> None:
     conn = _connect()
     try:
@@ -65,19 +91,33 @@ def set_push_include_grade_value(username: str, include_grade_value: bool) -> No
         raise
 
 
-def get_push_preferences(username: str) -> dict:
+def get_push_preferences(username: str, endpoint: str | None = None) -> dict:
     conn = _connect()
-    row = conn.execute(
-        """
-        SELECT include_grade_value
-        FROM push_subscriptions
-        WHERE username = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-        """,
-        (username,),
-    ).fetchone()
-    return {"include_grade_value": bool(row[0]) if row else False}
+    row = None
+    if endpoint:
+        row = conn.execute(
+            "SELECT include_grade_value FROM push_subscriptions WHERE username = ? AND endpoint = ?",
+            (username, endpoint),
+        ).fetchone()
+    known_here = row is not None
+    if row is None:
+        row = conn.execute(
+            """
+            SELECT include_grade_value
+            FROM push_subscriptions
+            WHERE username = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (username,),
+        ).fetchone()
+    return {
+        "include_grade_value": bool(row[0]) if row else False,
+        # L'appareil a un abonnement local mais le serveur ne le connaît plus (rotation de
+        # clé VAPID, purge sur 410, révocation depuis un autre appareil) : le client doit
+        # pouvoir le savoir au lieu d'afficher « notifications activées » à tort.
+        "subscribed_here": known_here,
+    }
 
 
 def get_push_subscriptions(username: str) -> list[dict]:

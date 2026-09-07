@@ -35,6 +35,36 @@ def get_semestres(username: str) -> dict | None:
         return None
 
 
+def get_semestres_with_age(username: str) -> tuple[dict, float] | None:
+    """Comme get_semestres(), mais renvoie aussi l'âge de l'entrée en secondes.
+
+    La réponse de dataPremièreConnexion embarque le relevé complet du semestre courant, que
+    le client utilise tel quel pour éviter un second aller-retour. Avec un TTL d'une heure,
+    ce relevé embarqué pouvait donc être quatre fois plus vieux que le TTL du relevé
+    lui-même (15 min) : on recevait une notification de nouvelle note et l'app l'affichait
+    sans. L'appelant se sert de l'âge pour ne plus servir le relevé embarqué passé ce délai.
+    """
+    conn = _connect()
+    row = conn.execute(
+        "SELECT payload, updated_at FROM semestres WHERE username = ?",
+        (username,),
+    ).fetchone()
+    if not row:
+        return None
+    age = time.time() - row[1]
+    if age > SEMESTRES_TTL:
+        return None
+    try:
+        return validate_premiere_connexion_payload(json.loads(row[0])), age
+    except Exception:
+        try:
+            conn.execute("DELETE FROM semestres WHERE username = ?", (username,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        return None
+
+
 def set_semestres(username: str, payload: dict) -> None:
     payload = validate_premiere_connexion_payload(payload)
     current_semestre_id = None

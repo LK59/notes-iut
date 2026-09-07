@@ -72,11 +72,21 @@ export async function subscribeToPush(includeGradeValue = false): Promise<void> 
   });
 }
 
+/**
+ * Désabonne UNIQUEMENT cet appareil. L'endpoint est capturé avant l'unsubscribe local et
+ * transmis au serveur : sans lui, la route supprimait toutes les lignes du compte, donc
+ * couper les notifications sur le PC les coupait aussi sur le téléphone — dont l'interface
+ * continuait pourtant d'afficher « activées ».
+ */
 export async function unsubscribeFromPush(): Promise<void> {
   const registration = await navigator.serviceWorker.ready;
   const subscription = await registration.pushManager.getSubscription();
+  const endpoint = subscription?.endpoint ?? null;
   if (subscription) await subscription.unsubscribe();
-  await request<{ ok: boolean }>("/api/push/subscribe", { method: "DELETE" });
+  await request<{ ok: boolean }>("/api/push/subscribe", {
+    method: "DELETE",
+    body: JSON.stringify({ endpoint }),
+  });
 }
 
 export async function getCurrentPushSubscription(): Promise<PushSubscription | null> {
@@ -94,12 +104,45 @@ export async function getCurrentPushSubscription(): Promise<PushSubscription | n
   }
 }
 
-export async function getPushPreferences(): Promise<{ includeGradeValue: boolean }> {
+export interface PushState {
+  includeGradeValue: boolean;
+  /** Le serveur connaît-il TOUJOURS l'abonnement de cet appareil ? Un abonnement local
+   * peut survivre à sa ligne serveur (rotation de clé VAPID, purge après un 410, ancienne
+   * révocation globale depuis un autre appareil) : l'app affichait alors « notifications
+   * activées » alors que plus aucune notification ne pouvait arriver. */
+  subscribedHere: boolean;
+}
+
+export async function getPushPreferences(endpoint?: string): Promise<PushState> {
   try {
-    return await request<{ includeGradeValue: boolean }>("/api/push/preferences");
+    const query = endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : "";
+    const data = await request<{ includeGradeValue: boolean; subscribedHere?: boolean }>(
+      `/api/push/preferences${query}`
+    );
+    return { includeGradeValue: data.includeGradeValue, subscribedHere: Boolean(data.subscribedHere) };
   } catch {
-    return { includeGradeValue: false };
+    return { includeGradeValue: false, subscribedHere: false };
   }
+}
+
+/**
+ * État réel des notifications sur cet appareil : abonnement local valide ET connu du
+ * serveur. Si l'abonnement local est valide mais orphelin côté serveur, on le réenregistre
+ * au passage — la permission est déjà accordée et l'intention de l'utilisateur inchangée.
+ */
+export async function loadPushState(): Promise<PushState & { subscribed: boolean }> {
+  const subscription = await getCurrentPushSubscription();
+  if (!subscription) return { subscribed: false, subscribedHere: false, includeGradeValue: false };
+  const state = await getPushPreferences(subscription.endpoint);
+  if (!state.subscribedHere) {
+    try {
+      await subscribeToPush(state.includeGradeValue);
+      return { ...state, subscribedHere: true, subscribed: true };
+    } catch {
+      return { ...state, subscribed: false };
+    }
+  }
+  return { ...state, subscribed: true };
 }
 
 export async function updatePushPreferences(includeGradeValue: boolean): Promise<void> {

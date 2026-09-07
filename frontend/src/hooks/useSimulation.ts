@@ -3,6 +3,7 @@ import { moyenneGenerale, pendingItems, ueMoyenne } from "../simulator";
 import type { Releve } from "../types";
 
 const SIM_PREFIX = "notes-iut-sim:";
+const EMPTY_OVERRIDES: Record<string, number> = {};
 
 function loadSimulation(semestreId: string): Record<string, number> {
   try {
@@ -32,22 +33,30 @@ export function useSimulation(
   fetchAndCacheCurrent: () => Promise<void>,
   setRefreshError: (message: string | null) => void
 ) {
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
+  // Le semestre auquel appartiennent les surcharges est porté par le même état qu'elles.
+  // Avec deux états séparés, l'effet de sauvegarde se déclenchait au changement de semestre
+  // avec les surcharges de l'ancien encore en mémoire, et les écrivait sous la clé du
+  // nouveau — écrasé au rendu suivant, sauf si le composant était démonté entre-temps.
+  const [sim, setSim] = useState<{ semestreId: string | null; overrides: Record<string, number> }>({
+    semestreId: null,
+    overrides: {},
+  });
+  const overrides = sim.semestreId === semestreId ? sim.overrides : EMPTY_OVERRIDES;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
 
   useEffect(() => {
     if (!semestreId) return;
-    setOverrides(loadSimulation(semestreId));
+    setSim({ semestreId, overrides: loadSimulation(semestreId) });
     setSelectedKey(null);
     setConfirmingReset(false);
   }, [semestreId]);
 
   useEffect(() => {
-    if (!semestreId) return;
-    saveSimulation(semestreId, overrides);
-  }, [semestreId, overrides]);
+    if (!sim.semestreId || sim.semestreId !== semestreId) return;
+    saveSimulation(sim.semestreId, sim.overrides);
+  }, [semestreId, sim]);
 
   // L'état "confirmation demandée" ne doit pas rester actif indéfiniment ni survivre à un
   // changement de semestre — sinon un clic accidentel plus tard pourrait effacer la simulation
@@ -80,8 +89,15 @@ export function useSimulation(
 
   const hasSimulation = Object.keys(overrides).length > 0;
 
+  function updateOverrides(update: (prev: Record<string, number>) => Record<string, number>) {
+    setSim((prev) => {
+      if (prev.semestreId !== semestreId) return prev;
+      return { semestreId: prev.semestreId, overrides: update(prev.overrides) };
+    });
+  }
+
   function handleOverrideChange(key: string, value: number | undefined) {
-    setOverrides((prev) => {
+    updateOverrides((prev) => {
       const next = { ...prev };
       if (value === undefined) delete next[key];
       else next[key] = value;
@@ -90,7 +106,7 @@ export function useSimulation(
   }
 
   function handleApplyMany(keys: string[], value: number) {
-    setOverrides((prev) => {
+    updateOverrides((prev) => {
       const next = { ...prev };
       for (const k of keys) next[k] = value;
       return next;
@@ -104,7 +120,7 @@ export function useSimulation(
       return;
     }
     setConfirmingReset(false);
-    setOverrides({});
+    updateOverrides(() => ({}));
     setSelectedKey(null);
     setResetting(true);
     setRefreshError(null);

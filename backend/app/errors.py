@@ -18,6 +18,19 @@ class InvalidCredentials(AppError):
     message = "Identifiant ou mot de passe incorrect."
 
 
+class CasAuthenticationRefused(AppError):
+    """Le CAS a refusé l'authentification pour une raison qui n'est pas « mot de passe
+    incorrect » : compte verrouillé ou désactivé, mot de passe expiré, MFA exigé, page
+    d'erreur inattendue. Distincte d'InvalidCredentials parce que le polling en tâche de
+    fond révoque tous les remember-tokens du compte sur InvalidCredentials — le faire ici
+    déconnecterait l'utilisateur de tous ses appareils pour un incident temporaire côté
+    université."""
+
+    status_code = 401
+    code = "CAS_AUTHENTICATION_REFUSED"
+    message = "Le CAS a refusé la connexion."
+
+
 class CasUnavailable(AppError):
     status_code = 503
     code = "CAS_UNAVAILABLE"

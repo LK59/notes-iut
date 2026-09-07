@@ -45,6 +45,10 @@ async def _login_jobs_cleanup_loop() -> None:
             cache.purge_old_remember_events()
         except Exception:
             logger.exception("Erreur purge des remember-events périmés")
+        try:
+            cache.purge_old_rate_limits()
+        except Exception:
+            logger.exception("Erreur purge des compteurs de rate-limit")
 
 
 @asynccontextmanager

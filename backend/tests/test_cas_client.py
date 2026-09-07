@@ -5,6 +5,7 @@ import requests
 
 from app.cas_client import CAS_BASE, DO_AUTH_URL, SITE_BASE, ScodocSession, login
 from app.errors import (
+    CasAuthenticationRefused,
     CasUnavailable,
     CasUnexpectedResponse,
     InvalidCredentials,
@@ -53,6 +54,43 @@ def test_login_invalid_credentials(requests_mock):
     with pytest.raises(InvalidCredentials) as exc_info:
         login("toto", "wrong")
     assert exc_info.value.message == "Mot de passe incorrect"
+
+
+@pytest.mark.parametrize(
+    "cas_message",
+    [
+        "Les informations d'identification que vous avez fournies ne peuvent pas être déterminées comme étant authentiques.",
+        "Identifiant ou mot de passe incorrect.",
+        "Invalid credentials.",
+    ],
+)
+def test_login_credential_messages_raise_invalid_credentials(requests_mock, cas_message):
+    html = f'<html><body><div id="loginErrorsPanel">{cas_message}</div></body></html>'
+    _mock_happy_path_up_to_cas(requests_mock, cas_status=200, cas_text=html)
+
+    with pytest.raises(InvalidCredentials):
+        login("toto", "wrong")
+
+
+@pytest.mark.parametrize(
+    "cas_message",
+    [
+        "Ce compte est verrouillé.",
+        "Votre mot de passe a expiré, vous devez le changer.",
+        "Une authentification à plusieurs facteurs est requise.",
+    ],
+)
+def test_login_non_credential_refusal_is_not_invalid_credentials(requests_mock, cas_message):
+    """Le polling push révoque TOUS les remember-tokens du compte sur InvalidCredentials :
+    un compte verrouillé ou un mot de passe expiré ne doit pas déclencher ça, sinon un
+    incident côté université déconnecte l'utilisateur de tous ses appareils."""
+    html = f'<html><body><div id="loginErrorsPanel">{cas_message}</div></body></html>'
+    _mock_happy_path_up_to_cas(requests_mock, cas_status=200, cas_text=html)
+
+    with pytest.raises(CasAuthenticationRefused) as exc_info:
+        login("toto", "secret")
+    assert not isinstance(exc_info.value, InvalidCredentials)
+    assert exc_info.value.message == cas_message
 
 
 def test_login_cas_response_without_error_panel_is_unexpected(requests_mock):

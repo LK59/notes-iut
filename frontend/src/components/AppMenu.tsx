@@ -4,10 +4,9 @@ import { useRegisterSW } from "virtual:pwa-register/react";
 import { useTheme } from "../theme";
 import { useAnchoredPopover } from "../hooks/useAnchoredPopover";
 import {
-  getCurrentPushSubscription,
-  getPushPreferences,
   isPushSupported,
   isStandalonePwa,
+  loadPushState,
   sendTestPush,
   subscribeToPush,
   unsubscribeFromPush,
@@ -55,12 +54,15 @@ export default function AppMenu({
   } = useRegisterSW();
 
   useEffect(() => {
-    getCurrentPushSubscription().then(async (subscription) => {
-      setIsSubscribed(Boolean(subscription));
-      if (!subscription) return;
-      const preferences = await getPushPreferences();
-      setIncludeGradeValue(preferences.includeGradeValue);
-    });
+    // loadPushState() croise l'abonnement local et ce que le serveur en sait : un abonnement
+    // local orphelin (clé VAPID renouvelée, purge après un 410) affichait « activées » sans
+    // qu'aucune notification ne puisse plus arriver.
+    loadPushState()
+      .then((state) => {
+        setIsSubscribed(state.subscribed);
+        setIncludeGradeValue(state.includeGradeValue);
+      })
+      .catch(() => {});
   }, []);
 
   const pushAvailable = isPushSupported();

@@ -35,6 +35,26 @@ REAUTH_WARNING_WINDOW_SECONDS = 24 * 3600
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:notes-iut@example.com")
 
 
+def _numeric_note_value(value: object) -> float | None:
+    """Même règle que numericNoteValue() côté client : une évaluation sans note n'est pas
+    renvoyée avec `null` par ScoDoc mais avec la chaîne "~". La traiter comme une valeur
+    faisait passer la publication de la vraie note pour une simple modification, et aucune
+    notification ne partait (le seul cas notifié était une évaluation créée ET notée entre
+    deux polls, c'est-à-dire quasiment jamais)."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip().replace(",", "."))
+        except ValueError:
+            return None
+    else:
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
 def _extract_grade_snapshot(releve: dict) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for group in ("ressources", "saes"):
@@ -45,7 +65,7 @@ def _extract_grade_snapshot(releve: dict) -> dict[str, str | None]:
                     continue
                 note = ev.get("note") or {}
                 val = note.get("value") if isinstance(note, dict) else None
-                result[ev_id] = str(val) if val is not None else None
+                result[ev_id] = str(val) if _numeric_note_value(val) is not None else None
     return result
 
 
@@ -58,30 +78,42 @@ def _find_new_grades(old_snapshot: dict[str, str | None], new_snapshot: dict[str
                 ev_id = str(ev.get("id", ""))
                 if not ev_id:
                     continue
-                old_val = old_snapshot.get(ev_id)
+                # _numeric_note_value des deux côtés : les snapshots écrits par les versions
+                # précédentes contiennent encore des "~" là où il n'y a pas de note, et une
+                # comparaison brute les prendrait pour une note déjà connue.
+                if _numeric_note_value(old_snapshot.get(ev_id)) is not None:
+                    continue
                 new_val = new_snapshot.get(ev_id)
-                if old_val is None and new_val is not None:
-                    try:
-                        float_val = float(new_val)
-                        if float_val == float_val:  # pas NaN
-                            new_grades.append({
-                                "description": ev.get("description") or "Évaluation",
-                                "module": f"{mod_code} – {mod_titre}",
-                                "value": new_val,
-                            })
-                    except (ValueError, TypeError):
-                        pass
+                if _numeric_note_value(new_val) is None:
+                    continue
+                new_grades.append({
+                    "id": ev_id,
+                    "description": ev.get("description") or "Évaluation",
+                    "module": f"{mod_code} – {mod_titre}",
+                    "value": new_val,
+                })
     return new_grades
+
+
+def _grade_tag(new_grades: list[dict]) -> str:
+    """Un tag distinct par lot de notes : avec un tag constant, deux notifications reçues
+    pendant que le téléphone est verrouillé se remplacent l'une l'autre et la première est
+    perdue sans avoir été lue."""
+    ids = "-".join(sorted(str(g.get("id") or "") for g in new_grades))
+    if not ids.strip("-"):
+        return f"notes-iut-grade-{int(time.time())}"
+    return f"notes-iut-grade-{hashlib.sha256(ids.encode()).hexdigest()[:12]}"
 
 
 def _push_message_payload(new_grades: list[dict], include_grade_value: bool) -> dict:
     count = len(new_grades)
+    tag = _grade_tag(new_grades)
     if count > 1:
         return {
             "title": "Plusieurs nouvelles notes sont disponibles",
             "body": "Ouvre Notes IUT pour les consulter.",
             "url": "/",
-            "tag": "notes-iut-grade",
+            "tag": tag,
         }
     if count == 1:
         g = new_grades[0]
@@ -90,15 +122,15 @@ def _push_message_payload(new_grades: list[dict], include_grade_value: bool) -> 
                 "title": f"Nouvelle note : {g['description']}",
                 "body": f"{g['module']} — {g['value']}/20",
                 "url": "/",
-                "tag": "notes-iut-grade",
+                "tag": tag,
             }
         return {
             "title": "Nouvelle note publiée",
             "body": f"{g['module']} — {g['description']}",
             "url": "/",
-            "tag": "notes-iut-grade",
+            "tag": tag,
         }
-    return {"title": "Nouvelle note publiée", "body": "Ouvre Notes IUT pour la consulter.", "url": "/", "tag": "notes-iut-grade"}
+    return {"title": "Nouvelle note publiée", "body": "Ouvre Notes IUT pour la consulter.", "url": "/", "tag": tag}
 
 
 def _send_push(subs: list[dict], message: dict) -> int:
@@ -197,6 +229,57 @@ def _maybe_send_reauth_warning(username: str) -> None:
     )
 
 
+def _semestre_sort_key(semestre: dict) -> tuple:
+    """Ordre chronologique explicite. ScoDoc renvoie ses semestres dans l'ordre voulu la
+    plupart du temps, mais rien ne le garantit (réinscription, redoublement, changement de
+    formation) et tout le reste — semestre « courant », semestre précédent, graphique
+    d'évolution — en dépend."""
+    annee = semestre.get("annee_scolaire")
+    numero = _numeric_note_value(semestre.get("semestre_id"))
+    fsid = _numeric_note_value(semestre.get("formsemestre_id"))
+    return (
+        str(annee) if annee is not None else "",
+        numero if numero is not None else -1.0,
+        fsid if fsid is not None else -1.0,
+    )
+
+
+def sorted_semestres(semestres: list) -> list[dict]:
+    return sorted((s for s in semestres if isinstance(s, dict)), key=_semestre_sort_key)
+
+
+def _count_evaluations(releve: dict) -> int:
+    return sum(
+        len(mod.get("evaluations") or [])
+        for group in ("ressources", "saes")
+        for mod in (releve.get(group) or {}).values()
+    )
+
+
+def _current_semestre_with_releve(scodoc: ScodocSession, semestres: list) -> tuple[str, dict] | None:
+    """Renvoie (formsemestre_id, relevé) du semestre à surveiller.
+
+    Prendre bêtement le dernier semestre ne marche pas à la rentrée : ScoDoc crée le
+    formsemestre de la nouvelle année dès l'inscription, vide, et il devient le dernier de
+    la liste. Le polling se calait alors sur un semestre sans aucune évaluation et ne voyait
+    plus jamais les notes qui tombaient encore sur le semestre précédent (notes tardives,
+    rattrapages, jurys). On retombe donc sur le semestre précédent tant que le dernier n'a
+    aucune évaluation — au plus un appel relevé supplémentaire, et seulement dans ce cas.
+    """
+    ordered = sorted_semestres(semestres)
+    fallback: tuple[str, dict] | None = None
+    for semestre in reversed(ordered[-2:]):
+        semestre_id = str(semestre.get("formsemestre_id") or "")
+        if not semestre_id:
+            continue
+        releve = validate_releve_payload(scodoc.releve_etudiant(semestre_id))["relevé"]
+        if fallback is None:
+            fallback = (semestre_id, releve)
+        if _count_evaluations(releve) > 0:
+            return (semestre_id, releve)
+    return fallback
+
+
 def _push_scodoc_session_and_bootstrap(username: str, password: str) -> tuple[ScodocSession, dict]:
     """Réutilise la session ScoDoc persistée du dernier poll plutôt que de refaire un login
     CAS complet à chaque cycle (voir save_push_session). Retombe sur un login complet si la
@@ -255,14 +338,12 @@ def _push_poll_user(username: str) -> None:
             cache.mark_push_poll_success(_username, None, 0, False)
             _log_event("push.poll.no_semestres", username_hash=_safe_hash(_username))
             return
-        current_semestre = semestres[-1]
-        semestre_id = str(current_semestre.get("formsemestre_id", ""))
-        if not semestre_id:
+        current = _current_semestre_with_releve(scodoc, semestres)
+        if current is None:
             cache.mark_push_poll_success(_username, None, 0, False)
             _log_event("push.poll.no_current_semestre", username_hash=_safe_hash(_username))
             return
-        releve_data = validate_releve_payload(scodoc.releve_etudiant(semestre_id))
-        releve = releve_data["relevé"]
+        semestre_id, releve = current
         current_snapshot = _extract_grade_snapshot(releve)
         stored_snapshot = cache.get_grade_snapshot(_username, semestre_id)
         if stored_snapshot is None:
@@ -277,6 +358,7 @@ def _push_poll_user(username: str) -> None:
             return
         new_grades = _find_new_grades(stored_snapshot, current_snapshot, releve)
         sent = 0
+        subs: list[dict] = []
         if new_grades:
             subs = cache.get_push_subscriptions(_username)
             _log_event("push.poll.new_grades", username_hash=_safe_hash(_username), count=len(new_grades), subscriptions=len(subs))
@@ -284,7 +366,21 @@ def _push_poll_user(username: str) -> None:
                 sent += _send_push([sub], _push_message_payload(new_grades, sub.get("include_grade_value", False)))
         else:
             _log_event("push.poll.no_new_grade", username_hash=_safe_hash(_username), semestre_id=semestre_id)
-        cache.set_grade_snapshot(_username, semestre_id, current_snapshot)
+        # Avancer le snapshot alors qu'aucun envoi n'a abouti marquerait la note comme « déjà
+        # vue » : elle ne serait plus jamais notifiée, alors que la panne (service de push
+        # injoignable, 500 côté FCM/APNs) est temporaire. On garde donc l'ancien snapshot et
+        # on retentera au prochain cycle. Sans aucun abonnement en revanche il n'y a personne
+        # à prévenir, et retenir le snapshot indéfiniment n'apporterait rien.
+        notification_pending = bool(new_grades) and bool(subs) and sent == 0
+        if notification_pending:
+            _log_event(
+                "push.poll.snapshot_held",
+                username_hash=_safe_hash(_username),
+                semestre_id=semestre_id,
+                new_grades=len(new_grades),
+            )
+        else:
+            cache.set_grade_snapshot(_username, semestre_id, current_snapshot)
         cache.mark_push_poll_success(_username, semestre_id, len(new_grades), sent > 0)
         _log_event(
             "push.poll.ok",
@@ -292,6 +388,7 @@ def _push_poll_user(username: str) -> None:
             semestre_id=semestre_id,
             new_grades=len(new_grades),
             notifications_sent=sent,
+            snapshot_held=notification_pending,
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
     except InvalidCredentials:

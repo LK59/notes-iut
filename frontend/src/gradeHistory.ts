@@ -92,7 +92,9 @@ export function recordGradeHistory(semestreId: string, previous: Releve | null, 
   }
 
   if (created.length > 0) {
-    saveHistory(semestreId, [...created.reverse(), ...existing]);
+    // Pas de .reverse() : les notes d'un même lot sont découvertes ensemble, sans chronologie
+    // entre elles, et les inverser affichait le relevé à l'envers.
+    saveHistory(semestreId, [...created, ...existing]);
   }
   return loadHistory(semestreId);
 }

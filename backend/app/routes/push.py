@@ -4,7 +4,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import cache
-from ..deps import PushPreferencesPayload, PushSubscribePayload, _require_session
+from ..deps import (
+    PushPreferencesPayload,
+    PushSubscribePayload,
+    PushUnsubscribePayload,
+    _require_session,
+)
 from ..logging_utils import logger
 from ..push_polling import _send_push
 
@@ -26,10 +31,13 @@ def api_push_subscribe(payload: PushSubscribePayload, request: Request):
 
 
 @router.get("/api/push/preferences")
-def api_push_preferences(request: Request):
+def api_push_preferences(request: Request, endpoint: str | None = None):
     session = _require_session(request)
-    preferences = cache.get_push_preferences(session.username)
-    return {"includeGradeValue": preferences["include_grade_value"]}
+    preferences = cache.get_push_preferences(session.username, endpoint)
+    return {
+        "includeGradeValue": preferences["include_grade_value"],
+        "subscribedHere": preferences["subscribed_here"],
+    }
 
 
 @router.put("/api/push/preferences")
@@ -40,9 +48,12 @@ def api_update_push_preferences(payload: PushPreferencesPayload, request: Reques
 
 
 @router.delete("/api/push/subscribe")
-def api_push_unsubscribe(request: Request):
+def api_push_unsubscribe(request: Request, payload: PushUnsubscribePayload | None = None):
     session = _require_session(request)
-    cache.delete_push_subscriptions(session.username)
+    if payload is not None and payload.endpoint:
+        cache.delete_push_subscription_for_user(session.username, payload.endpoint)
+    else:
+        cache.delete_push_subscriptions(session.username)
     return {"ok": True}
 
 

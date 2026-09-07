@@ -97,8 +97,19 @@ setCatchHandler(async ({ event }) => {
 
 // ── Push notifications ──────────────────────────────────────────────────────
 
+// Un payload absent ou illisible faisait lever json() : l'exception remontait hors du
+// handler et le navigateur affichait à la place sa notification générique « Ce site a été
+// mis à jour en arrière-plan », impossible à relier à une note.
+function pushPayload(event: PushEvent): Record<string, string | undefined> {
+  try {
+    return (event.data?.json() as Record<string, string | undefined>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 self.addEventListener("push", (event) => {
-  const data = (event as PushEvent).data?.json() ?? {};
+  const data = pushPayload(event as PushEvent);
   const options: NotificationOptions = {
     body: data.body ?? "",
     icon: "/icon-192.png",

@@ -24,7 +24,7 @@ const USER_SW_CACHES = ["api-data", "api-photo"];
 // À incrémenter chaque fois que le format des données mises en cache change (nouveaux champs,
 // nouvelle façon de calculer les agrégats...) : ça force tous les clients à repartir d'un cache
 // vide au lieu de réutiliser une structure périmée potentiellement incompatible.
-const CURRENT_VERSION = "3";
+const CURRENT_VERSION = "4";
 
 function isQuotaExceeded(err: unknown): boolean {
   return err instanceof DOMException && (err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");

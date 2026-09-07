@@ -33,13 +33,23 @@ def _prefetch_releves(session: UserSession, semestres: list) -> None:
 def api_semestres(request: Request, background_tasks: BackgroundTasks):
     session = _require_session(request)
 
-    cached = cache.get_semestres(session.username)
+    cached = cache.get_semestres_with_age(session.username)
     if cached is not None:
+        payload, age = cached
         # Pas de prefetch ici : cette route est appelée à chaque retour au premier plan de la
         # PWA. Reprogrammer un balayage de tous les semestres à chaque fois multipliait les
         # requêtes vers le portail de l'IUT sans rien apporter, puisque les relevés déjà en
         # cache sont de toute façon ignorés par _prefetch_releves.
-        return cached
+        #
+        # La réponse embarque le relevé complet du semestre courant, dont le client se sert
+        # tel quel pour s'épargner un aller-retour. Avec le TTL d'une heure de cette entrée,
+        # ce relevé pouvait être bien plus vieux que le TTL du relevé lui-même (15 min) :
+        # on recevait une notification de nouvelle note et l'app l'affichait sans. Passé ce
+        # délai on retire donc le relevé embarqué : la liste des semestres, elle, reste
+        # valable une heure, et le client ira chercher /api/releve/{id} normalement.
+        if age > cache.RELEVE_CURRENT_TTL:
+            payload = {k: v for k, v in payload.items() if k not in ("relevé", "absences")}
+        return payload
 
     try:
         data = validate_premiere_connexion_payload(session.scodoc.premiere_connexion())

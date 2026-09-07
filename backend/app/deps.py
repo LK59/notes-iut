@@ -32,6 +32,21 @@ class PushPreferencesPayload(BaseModel):
     includeGradeValue: bool = False
 
 
+class PushUnsubscribePayload(BaseModel):
+    """endpoint absent = « désactive partout » (bouton explicite) ; endpoint fourni =
+    seul cet appareil se désabonne."""
+
+    endpoint: str | None = Field(default=None, max_length=2048)
+
+
+class LogoutPayload(BaseModel):
+    """Endpoint push de l'appareil qui se déconnecte. Sans lui, l'abonnement restait
+    rattaché au compte sortant : sur un téléphone partagé, l'étudiant suivant recevait
+    les notifications de notes du précédent."""
+
+    pushEndpoint: str | None = Field(default=None, max_length=2048)
+
+
 def _admin_usernames() -> set[str]:
     raw = os.environ.get("ADMIN_USERNAMES", "")
     return {item.strip() for item in raw.split(",") if item.strip()}

@@ -117,6 +117,9 @@ export interface PremiereConnexionResponse {
   auth: { session: string; name?: string; statut: string };
   semestres: Semestre[];
   config?: unknown;
-  relevé: Releve;
+  /** Relevé du semestre courant, embarqué par le portail pour éviter un second appel.
+   * Absent quand l'entrée de cache serveur est trop vieille pour que ce relevé soit
+   * encore fiable (voir api_semestres) : le client va alors chercher /api/releve/{id}. */
+  relevé?: Releve;
   absences?: AbsencesByDate;
 }
