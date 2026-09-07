@@ -10,6 +10,7 @@ import {
   moyenneProgression,
   newlyPublishedIds,
   numericNoteValue,
+  overridesEqualForUe,
   pendingItems,
   round2,
   solveUniformTarget,
@@ -274,5 +275,30 @@ describe("moyenneProgression", () => {
   it("ne renvoie rien tant qu'une seule vague de notes est datée", () => {
     expect(moyenneProgression(makeReleve(), { 1: "2026-03-01T09:00:00Z" })).toEqual([]);
     expect(moyenneProgression(makeReleve(), {})).toEqual([]);
+  });
+});
+
+describe("overridesEqualForUe (comparateur de rendu)", () => {
+  it("ignore une surcharge portant sur une autre UE", () => {
+    const { ues } = makeReleve();
+    expect(overridesEqualForUe(ues.A, {}, { "ressources-MODB-0": 15 })).toBe(true);
+  });
+
+  it("détecte une surcharge ajoutée, modifiée ou retirée sur un module de l'UE", () => {
+    const { ues } = makeReleve();
+    expect(overridesEqualForUe(ues.A, {}, { "ressources-MODA-0": 15 })).toBe(false);
+    expect(overridesEqualForUe(ues.A, { "ressources-MODA-0": 15 }, { "ressources-MODA-0": 16 })).toBe(false);
+    expect(overridesEqualForUe(ues.A, { "ressources-MODA-0": 15 }, {})).toBe(false);
+  });
+
+  it("détecte la saisie manuelle d'un module sans évaluation", () => {
+    const { ues } = makeReleve();
+    expect(overridesEqualForUe(ues.A, {}, { "ressources-MODA-manual": 12 })).toBe(false);
+  });
+
+  it("considère identiques deux objets distincts de même contenu", () => {
+    const { ues } = makeReleve();
+    const a = { "ressources-MODA-0": 15, "ressources-MODB-0": 9 };
+    expect(overridesEqualForUe(ues.A, a, { ...a })).toBe(true);
   });
 });

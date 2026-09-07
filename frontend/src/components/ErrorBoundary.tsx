@@ -13,6 +13,12 @@ interface State {
 }
 
 const CHUNK_RELOAD_KEY = "notes-iut-boundary-reload";
+/** recoverFromChunkLoadError() annonce une tentative de récupération avant de savoir si
+ * l'asset manque vraiment (il le vérifie par un HEAD 600 ms plus tard). Quand il existe
+ * toujours — coupure passagère, ou HEAD servi depuis le cache du service worker — aucun
+ * rechargement n'a lieu, et l'écran de chargement restait affiché indéfiniment, sans un
+ * seul bouton. Passé ce délai, on retombe donc sur l'écran manuel. */
+const AUTO_RELOAD_FALLBACK_MS = 5000;
 
 /**
  * Filet de sécurité : sans ça, toute erreur de rendu (y compris un échec de chargement de
@@ -37,6 +43,28 @@ export default class ErrorBoundary extends Component<Props, State> {
       return { error, autoReloading: false, chunkReloadFailed: true };
     }
     return { error, autoReloading: false, chunkReloadFailed: false };
+  }
+
+  private autoReloadTimer: number | null = null;
+
+  componentDidMount() {
+    if (this.state.autoReloading) this.scheduleAutoReloadFallback();
+  }
+
+  componentDidUpdate(_prevProps: Props, prevState: State) {
+    if (this.state.autoReloading && !prevState.autoReloading) this.scheduleAutoReloadFallback();
+  }
+
+  componentWillUnmount() {
+    if (this.autoReloadTimer !== null) window.clearTimeout(this.autoReloadTimer);
+  }
+
+  private scheduleAutoReloadFallback() {
+    this.autoReloadTimer = window.setTimeout(() => {
+      resetChunkRecoveryState();
+      sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+      this.setState({ autoReloading: false, chunkReloadFailed: true });
+    }, AUTO_RELOAD_FALLBACK_MS);
   }
 
   private handleClearAndReload = () => {

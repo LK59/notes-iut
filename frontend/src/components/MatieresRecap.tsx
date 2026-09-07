@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { Releve } from "../types";
 import { fmt, moduleAggregate, moduleIsSimulated, moduleWeightInUe, ueWeightInGlobal } from "../simulator";
 import { comparedToClass, Grade, Panel } from "./ui";
@@ -20,9 +21,12 @@ export default function MatieresRecap({
   releve: Releve;
   overrides: Record<string, number>;
 }) {
+  // Mémoïsé : ces lignes parcourent tous les modules et toutes les UE, et étaient
+  // reconstruites à chaque caractère saisi dans un champ de note ailleurs sur la page.
+  const rows = useMemo(() => {
   const ueEntries = Object.entries(releve.ues).filter(([, ue]) => ue.type !== 1);
 
-  const rows = (["ressources", "saes"] as const)
+  return (["ressources", "saes"] as const)
     .flatMap((group) =>
       Object.entries(releve[group] || {}).map(([moduleCode, mod]) => {
         const aggregate = moduleAggregate(mod, group, moduleCode, overrides);
@@ -51,6 +55,7 @@ export default function MatieresRecap({
       })
     )
     .sort((a, b) => (b.weightGlobal ?? 0) - (a.weightGlobal ?? 0));
+  }, [releve, overrides]);
 
   const maxWeight = Math.max(...rows.map((row) => row.weightGlobal ?? 0), 1);
 

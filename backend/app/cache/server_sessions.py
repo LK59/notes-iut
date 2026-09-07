@@ -2,6 +2,11 @@
 
 Les cookies de session ScoDoc/CAS sont chiffrés comme un mot de passe : ils
 donnent un accès complet au compte tant que la session CAS distante est valide.
+
+Chaque écriture est encadrée d'un rollback, comme dans le reste du package : les
+connexions sont thread-local et réutilisées d'une requête à l'autre, donc un commit
+qui échoue laisserait une transaction ouverte sur la connexion de ce thread — et
+toutes les requêtes suivantes servies par lui.
 """
 from __future__ import annotations
 
@@ -17,23 +22,35 @@ from .secrets import _get_fernet
 def save_session(sid: str, username: str, cookies: dict[str, str], created_at: float) -> None:
     encrypted = _get_fernet().encrypt(json.dumps(cookies).encode()).decode()
     conn = _connect()
-    conn.execute(
-        "INSERT OR REPLACE INTO sessions (sid, username, encrypted_cookies, created_at) VALUES (?, ?, ?, ?)",
-        (sid, username, encrypted, created_at),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions (sid, username, encrypted_cookies, created_at) VALUES (?, ?, ?, ?)",
+            (sid, username, encrypted, created_at),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def delete_session_row(sid: str) -> None:
     conn = _connect()
-    conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
-    conn.commit()
+    try:
+        conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def purge_expired_sessions(cutoff: float) -> None:
     conn = _connect()
-    conn.execute("DELETE FROM sessions WHERE created_at < ?", (cutoff,))
-    conn.commit()
+    try:
+        conn.execute("DELETE FROM sessions WHERE created_at < ?", (cutoff,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def load_sessions() -> list[tuple[str, str, dict[str, str], float]]:
@@ -47,8 +64,11 @@ def load_sessions() -> list[tuple[str, str, dict[str, str], float]]:
         try:
             cookies = json.loads(fernet.decrypt(encrypted_cookies.encode()).decode())
         except (InvalidToken, ValueError):
-            conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
-            conn.commit()
+            try:
+                conn.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
+                conn.commit()
+            except Exception:
+                conn.rollback()
             continue
         restored.append((sid, username, cookies, created_at))
     return restored
@@ -62,11 +82,15 @@ def load_sessions() -> list[tuple[str, str, dict[str, str], float]]:
 def save_push_session(username: str, cookies: dict[str, str]) -> None:
     encrypted = _get_fernet().encrypt(json.dumps(cookies).encode()).decode()
     conn = _connect()
-    conn.execute(
-        "INSERT OR REPLACE INTO push_sessions (username, encrypted_cookies, updated_at) VALUES (?, ?, ?)",
-        (username, encrypted, time.time()),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO push_sessions (username, encrypted_cookies, updated_at) VALUES (?, ?, ?)",
+            (username, encrypted, time.time()),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def get_push_session(username: str) -> dict[str, str] | None:
@@ -79,15 +103,22 @@ def get_push_session(username: str) -> dict[str, str] | None:
     try:
         return json.loads(_get_fernet().decrypt(row[0].encode()).decode())
     except (InvalidToken, ValueError):
-        conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
-        conn.commit()
+        try:
+            conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
         return None
 
 
 def delete_push_session(username: str) -> None:
     conn = _connect()
-    conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
-    conn.commit()
+    try:
+        conn.execute("DELETE FROM push_sessions WHERE username = ?", (username,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def purge_orphaned_push_sessions() -> int:
@@ -97,8 +128,12 @@ def purge_orphaned_push_sessions() -> int:
         "SELECT username FROM push_sessions WHERE username NOT IN (SELECT DISTINCT username FROM push_subscriptions)"
     ).fetchall()
     if rows:
-        conn.execute(
-            "DELETE FROM push_sessions WHERE username NOT IN (SELECT DISTINCT username FROM push_subscriptions)"
-        )
-        conn.commit()
+        try:
+            conn.execute(
+                "DELETE FROM push_sessions WHERE username NOT IN (SELECT DISTINCT username FROM push_subscriptions)"
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return len(rows)

@@ -112,6 +112,7 @@ export default function Dashboard({
     overrides,
     selectedKey,
     setSelectedKey,
+    ueAggregates,
     ueMoyennes,
     moyenneSimulee,
     pending,
@@ -127,9 +128,12 @@ export default function Dashboard({
   const { printMode, setPrintMode } = usePrintExport();
 
   // Avant les retours anticipés ci-dessous : l'ordre des hooks doit rester stable.
+  // Conditionné à la vue : le calcul repasse sur tout le relevé une fois par date de
+  // publication, inutile tant que le graphique n'est pas à l'écran.
   const progression = useMemo(
-    () => (releve ? moyenneProgression(releve, publicationDates(gradeHistory)) : []),
-    [releve, gradeHistory]
+    () =>
+      releve && view === "graphiques" ? moyenneProgression(releve, publicationDates(gradeHistory)) : [],
+    [releve, gradeHistory, view]
   );
 
   if (isLoading) return <Centered>Chargement de tes relevés…</Centered>;
@@ -389,6 +393,7 @@ export default function Dashboard({
               releve={releve}
               overrides={overrides}
               ueMoyennes={ueMoyennes}
+              ueAggregates={ueAggregates}
               evolution={evolution}
               progression={progression}
               allReleves={allReleves}

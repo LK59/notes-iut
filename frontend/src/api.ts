@@ -1,6 +1,6 @@
 import type { PremiereConnexionResponse, ReleveResponse } from "./types";
 import { cacheGet, cacheSet, clearCache, clearServiceWorkerCaches } from "./offlineCache";
-import { PremiereConnexionSchema, ReleveResponseSchema } from "./schemas";
+import { isPremiereConnexionPayload, isReleveResponsePayload } from "./schemas";
 
 /** Erreur HTTP "normale" (réponse reçue du serveur) — distincte d'une vraie panne réseau. */
 export class HttpError extends Error {
@@ -71,8 +71,8 @@ export async function request<T>(path: string, init?: RequestInit, retried = fal
   const isAuthPath =
     path === "/api/login" ||
     path === "/api/refresh" ||
-    path.startsWith("/api/login/status/") ||
-    path.startsWith("/api/refresh/status/");
+    path === "/api/login/status" ||
+    path === "/api/refresh/status";
   if (resp.status === 401 && !isAuthPath) {
     if (!retried && (await trySilentReauth())) {
       return request<T>(path, init, true);
@@ -102,13 +102,12 @@ function _invalidPayloadError(detail: string): HttpError {
 }
 
 function validateSemestresPayload(data: unknown): PremiereConnexionResponse {
-  const result = PremiereConnexionSchema.safeParse(data);
-  if (!result.success) {
+  if (!isPremiereConnexionPayload(data)) {
     throw _invalidPayloadError(
       "Le portail de notes a renvoyé une réponse invalide. Réessaie dans quelques minutes."
     );
   }
-  return normalizeSemestres(result.data as unknown as PremiereConnexionResponse);
+  return normalizeSemestres(data);
 }
 
 /**
@@ -137,13 +136,12 @@ function normalizeSemestres(data: PremiereConnexionResponse): PremiereConnexionR
 }
 
 function validateRelevePayload(data: unknown): ReleveResponse {
-  const result = ReleveResponseSchema.safeParse(data);
-  if (!result.success) {
+  if (!isReleveResponsePayload(data)) {
     throw _invalidPayloadError(
       "Le portail de notes a renvoyé un relevé invalide. Réessaie dans quelques minutes."
     );
   }
-  return result.data as unknown as ReleveResponse;
+  return data;
 }
 
 /**
@@ -153,7 +151,7 @@ function validateRelevePayload(data: unknown): ReleveResponse {
 let reauthInFlight: Promise<boolean> | null = null;
 function trySilentReauth(): Promise<boolean> {
   if (!reauthInFlight) {
-    reauthInFlight = pollAuthJob("/api/refresh", "/api/refresh/status/")
+    reauthInFlight = pollAuthJob("/api/refresh", "/api/refresh/status")
       .then(() => true)
       .catch(() => false)
       .finally(() => { reauthInFlight = null; });
@@ -167,7 +165,7 @@ function trySilentReauth(): Promise<boolean> {
  */
 export async function autoLoginIfRemembered(): Promise<{ username: string; isAdmin?: boolean } | null> {
   try {
-    const res = await pollAuthJob("/api/refresh", "/api/refresh/status/");
+    const res = await pollAuthJob("/api/refresh", "/api/refresh/status");
     return { username: res.username, isAdmin: res.isAdmin };
   } catch {
     return null;
@@ -232,7 +230,7 @@ const AUTH_JOB_POLL_MAX_MS = 60000;
  */
 async function pollAuthJob(
   postPath: string,
-  statusPathPrefix: string,
+  statusPath: string,
   body?: unknown,
   onStage?: (stage: string | undefined) => void
 ): Promise<{ ok: boolean; username: string; isAdmin?: boolean }> {
@@ -245,7 +243,9 @@ async function pollAuthJob(
   for (;;) {
     let res: { status: string; ok?: boolean; username?: string; isAdmin?: boolean; stage?: string };
     try {
-      res = await request(`${statusPathPrefix}${job_id}`);
+      // job_id dans le corps et non dans l'URL : uvicorn journalise le chemin de chaque
+      // requête, et cet identifiant suffit à récupérer un cookie de session.
+      res = await request(statusPath, { method: "POST", body: JSON.stringify({ job_id }) });
     } catch (err) {
       // Une erreur du job lui-même arrive toujours comme HttpError (enveloppe d'erreur du
       // backend) : elle doit remonter telle quelle. Une panne réseau sur un poll de statut,
@@ -275,7 +275,7 @@ export const LOGIN_STAGE_LABELS: Record<string, string> = {
 };
 
 export function login(username: string, password: string, remember = false, onStage?: (stage: string | undefined) => void) {
-  return pollAuthJob("/api/login", "/api/login/status/", { username, password, remember }, onStage);
+  return pollAuthJob("/api/login", "/api/login/status", { username, password, remember }, onStage);
 }
 
 /**
@@ -330,7 +330,7 @@ export function me() {
 /** Reconnexion explicite (bouton du bandeau d'avertissement) : redemande un sid + un
  * remember-token frais via le cookie remember existant, sans ressaisie du mot de passe. */
 export function reconnectNow() {
-  return pollAuthJob("/api/refresh", "/api/refresh/status/");
+  return pollAuthJob("/api/refresh", "/api/refresh/status");
 }
 
 export function clearServerCache() {

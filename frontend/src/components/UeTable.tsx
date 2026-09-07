@@ -8,6 +8,7 @@ import {
   moduleIsSimulated,
   moduleWeightInUe,
   numericNoteValue,
+  overridesEqualForUe,
   toNumber,
   ueAggregate,
   ueIsSimulated,
@@ -35,9 +36,10 @@ interface Props {
 /**
  * Détail complet d'une UE, avec saisie de notes simulées.
  *
- * Mémoïsé : chaque caractère tapé dans un champ de note met à jour l'objet `overrides`
- * au niveau du tableau de bord, ce qui re-rendait sinon toutes les UE de la page à
- * chaque frappe. Seules les UE dont les props changent réellement sont désormais rendues.
+ * Mémoïsé avec un comparateur sur mesure (voir en bas de fichier). Un memo() par défaut ne
+ * servait à rien ici : `overrides` est un objet neuf à chaque caractère saisi et `onChange`
+ * une fonction neuve à chaque rendu du tableau de bord, donc la comparaison superficielle
+ * échouait toujours et toutes les UE de la page étaient re-rendues à chaque frappe.
  */
 function UeTable({
   ueCode,
@@ -311,4 +313,17 @@ function UeTable({
   );
 }
 
-export default memo(UeTable);
+export default memo(UeTable, (prev, next) => {
+  return (
+    prev.ueCode === next.ueCode &&
+    prev.ue === next.ue &&
+    prev.releve === next.releve &&
+    prev.onChange === next.onChange &&
+    prev.onSelect === next.onSelect &&
+    prev.selectedKey === next.selectedKey &&
+    prev.defaultOpen === next.defaultOpen &&
+    prev.printMode === next.printMode &&
+    prev.newIds === next.newIds &&
+    overridesEqualForUe(next.ue, prev.overrides, next.overrides)
+  );
+});

@@ -13,6 +13,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import BaseModel, Field
 
 from .. import cache
 from ..cas_client import login as cas_login
@@ -47,6 +48,19 @@ router = APIRouter()
 _login_jobs: dict[str, dict] = {}
 _login_jobs_lock = threading.Lock()
 LOGIN_JOB_TTL_SECONDS = 180
+# Un job terminé reste relisible ce délai après sa PREMIÈRE lecture réussie, pas les 180 s
+# complètes : c'est la réponse qui porte le Set-Cookie, elle doit pouvoir être redemandée si
+# elle se perd en route, mais elle n'a aucune raison de rester rejouable ensuite.
+LOGIN_JOB_GRACE_SECONDS = 30
+
+
+class JobStatusPayload(BaseModel):
+    """Le job_id voyage dans le corps de la requête et non dans l'URL : uvicorn journalise le
+    chemin de chaque requête, donc un identifiant en segment d'URL se retrouve en clair dans
+    les logs du conteneur — et il suffit à récupérer un cookie de session tant que le job est
+    lisible."""
+
+    job_id: str = Field(min_length=1, max_length=64)
 
 
 def _cleanup_login_jobs() -> None:
@@ -54,13 +68,27 @@ def _cleanup_login_jobs() -> None:
     réponse-là qui porte le Set-Cookie de session, et si elle se perd (coupure 4G pile à cet
     instant — exactement ce que l'architecture asynchrone cherche à absorber), le client
     repollait et recevait un 404 « connexion inconnue » alors que le login CAS avait réussi.
-    Les jobs terminés restent donc lisibles, idempotents, jusqu'à leur TTL, et c'est ce
-    ménage périodique qui les retire."""
-    cutoff = time.time() - LOGIN_JOB_TTL_SECONDS
+    Un job terminé reste donc relisible, mais seulement LOGIN_JOB_GRACE_SECONDS après sa
+    première lecture — au-delà, il n'est plus qu'un jeton rejouable sans usage légitime."""
+    now = time.time()
     with _login_jobs_lock:
-        stale = [job_id for job_id, job in _login_jobs.items() if job["created_at"] < cutoff]
+        stale = [
+            job_id
+            for job_id, job in _login_jobs.items()
+            if job["created_at"] < now - LOGIN_JOB_TTL_SECONDS
+            or (job.get("read_at") is not None and job["read_at"] < now - LOGIN_JOB_GRACE_SECONDS)
+        ]
         for job_id in stale:
             _login_jobs.pop(job_id, None)
+
+
+def _take_job(job_id: str) -> dict | None:
+    """Lit un job et note l'instant de sa première lecture terminale (voir _cleanup_login_jobs)."""
+    with _login_jobs_lock:
+        job = _login_jobs.get(job_id)
+        if job is not None and job["status"] != "pending" and job.get("read_at") is None:
+            job["read_at"] = time.time()
+        return job
 
 
 def _make_stage_updater(job_id: str):
@@ -126,10 +154,7 @@ def api_login(payload: LoginPayload, request: Request):
     return {"job_id": job_id}
 
 
-@router.get("/api/login/status/{job_id}")
-def api_login_status(job_id: str, response: Response):
-    with _login_jobs_lock:
-        job = _login_jobs.get(job_id)
+def _login_status_response(job: dict | None, response: Response) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="Requête de connexion inconnue ou expirée.")
     if job["status"] == "pending":
@@ -141,6 +166,23 @@ def api_login_status(job_id: str, response: Response):
     if job.get("remember_token"):
         _set_remember_cookie(response, job["remember_token"])
     return {"status": "ok", "ok": True, "username": job["username"], "isAdmin": _is_admin_username(job["username"])}
+
+
+@router.post("/api/login/status")
+def api_login_status(payload: JobStatusPayload, response: Response):
+    return _login_status_response(_take_job(payload.job_id), response)
+
+
+@router.get("/api/login/status/{job_id}")
+def api_login_status_legacy(job_id: str, response: Response):
+    """Ancienne forme, conservée le temps que les onglets ouverts au moment du déploiement
+    finissent leur login en cours. Le job est consommé immédiatement ici : cette URL-là finit
+    dans les logs, elle ne doit pas rester rejouable."""
+    with _login_jobs_lock:
+        job = _login_jobs.get(job_id)
+        if job is not None and job["status"] != "pending":
+            del _login_jobs[job_id]  # consommé à la première lecture, comme avant
+    return _login_status_response(job, response)
 
 
 def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, user_agent: str | None, client_ip: str | None) -> None:
@@ -210,10 +252,7 @@ def api_refresh(request: Request, response: Response):
     return {"job_id": job_id}
 
 
-@router.get("/api/refresh/status/{job_id}")
-def api_refresh_status(job_id: str, response: Response):
-    with _login_jobs_lock:
-        job = _login_jobs.get(job_id)
+def _refresh_status_response(job: dict | None, response: Response) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="Requête de reconnexion inconnue ou expirée.")
     if job["status"] == "pending":
@@ -226,6 +265,21 @@ def api_refresh_status(job_id: str, response: Response):
     _set_sid_cookie(response, job["sid"])
     _set_remember_cookie(response, job["remember_token"])
     return {"status": "ok", "ok": True, "username": job["username"], "isAdmin": _is_admin_username(job["username"])}
+
+
+@router.post("/api/refresh/status")
+def api_refresh_status(payload: JobStatusPayload, response: Response):
+    return _refresh_status_response(_take_job(payload.job_id), response)
+
+
+@router.get("/api/refresh/status/{job_id}")
+def api_refresh_status_legacy(job_id: str, response: Response):
+    """Voir api_login_status_legacy."""
+    with _login_jobs_lock:
+        job = _login_jobs.get(job_id)
+        if job is not None and job["status"] != "pending":
+            del _login_jobs[job_id]
+    return _refresh_status_response(job, response)
 
 
 @router.post("/api/logout")

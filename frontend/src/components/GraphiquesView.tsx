@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import type { ModuleEntry, Releve, Semestre } from "../types";
-import { numericNoteValue, round2, ueMoyenneCompat, ueAggregate } from "../simulator";
+import { numericNoteValue, round2, ueMoyenneCompat, type Agg } from "../simulator";
 import type { SemestrePoint } from "./EvolutionChart";
 import type { ProgressionPoint } from "../simulator";
 import { useChartTheme } from "../chartTheme";
@@ -27,6 +27,9 @@ interface Props {
   releve: Releve;
   overrides: Record<string, number>;
   ueMoyennes: Record<string, number | null>;
+  /** Agrégats complets calculés une seule fois par useSimulation : les recalculer ici
+   * refaisait une passe entière sur toutes les évaluations du relevé. */
+  ueAggregates: Record<string, Agg>;
   evolution: SemestrePoint[];
   progression: ProgressionPoint[];
   allReleves: Record<string, Releve>;
@@ -67,6 +70,7 @@ export default function GraphiquesView({
   releve,
   overrides,
   ueMoyennes,
+  ueAggregates,
   evolution,
   progression,
   allReleves,
@@ -86,11 +90,11 @@ export default function GraphiquesView({
 
   const comparisonData = useMemo(
     () =>
-      ueEntries.map(([code, ue]) => {
-        const aggregate = ueAggregate(ue, releve, overrides, code);
-        return { ue: code, moi: round2(aggregate.value), promo: round2(aggregate.moy) };
+      ueEntries.map(([code]) => {
+        const aggregate = ueAggregates[code];
+        return { ue: code, moi: round2(aggregate?.value ?? null), promo: round2(aggregate?.moy ?? null) };
       }),
-    [ueEntries, releve, overrides]
+    [ueEntries, ueAggregates]
   );
 
   /**

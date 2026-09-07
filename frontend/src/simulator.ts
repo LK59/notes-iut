@@ -276,6 +276,32 @@ export function moduleIsSimulated(
   return mod.evaluations.some((_, idx) => `${group}-${moduleCode}-${idx}` in overrides);
 }
 
+/**
+ * Les surcharges qui concernent cette UE sont-elles inchangées ?
+ *
+ * Sert de comparateur au memo() de UeTable : `overrides` est un objet neuf à chaque
+ * caractère saisi, donc une comparaison d'identité re-rendait toutes les UE de la page à
+ * chaque frappe. Les clés suivent `${group}-${moduleCode}-${index}` (plus `-manual` pour un
+ * module sans évaluation), et une même ressource peut alimenter plusieurs UE : on compare
+ * donc par préfixe de module, pour que toutes les UE qui affichent cette ressource se
+ * re-rendent bien quand sa note simulée change.
+ */
+export function overridesEqualForUe(
+  ue: Ue,
+  a: Record<string, number>,
+  b: Record<string, number>
+): boolean {
+  const prefixes: string[] = [];
+  for (const group of ["ressources", "saes"] as const) {
+    for (const moduleCode of Object.keys(ue[group] || {})) prefixes.push(`${group}-${moduleCode}-`);
+  }
+  const concerns = (key: string) => prefixes.some((prefix) => key.startsWith(prefix));
+  const keysA = Object.keys(a).filter(concerns);
+  const keysB = Object.keys(b).filter(concerns);
+  if (keysA.length !== keysB.length) return false;
+  return keysA.every((key) => a[key] === b[key]);
+}
+
 /** Une UE est "simulée" si un de ses modules l'est. */
 export function ueIsSimulated(ue: Ue, releve: Releve, overrides: Record<string, number>): boolean {
   for (const [group, summaries] of [

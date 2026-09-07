@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { moyenneGenerale, pendingItems, ueMoyenne } from "../simulator";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { moyenneGenerale, pendingItems, ueAggregate, type Agg } from "../simulator";
 import type { Releve } from "../types";
 
 const SIM_PREFIX = "notes-iut-sim:";
@@ -70,14 +70,24 @@ export function useSimulation(
   // Ces trois calculs parcourent toutes les UE, tous les modules et toutes les évaluations.
   // Sans mémoïsation ils étaient refaits à chaque rendu — donc à chaque caractère tapé dans
   // un champ de note, ce qui était la cause principale de la latence de saisie sur mobile.
-  const ueMoyennes = useMemo<Record<string, number | null>>(() => {
-    const result: Record<string, number | null> = {};
+  // Agrégats complets (valeur + min/moy/max de promo) calculés une fois pour toutes : la
+  // moyenne seule était recalculée ici, puis une seconde fois par la vue Graphiques qui a
+  // besoin de `moy`. Les UeTable, elles, gardent leur calcul local — grâce au memo ci-dessus
+  // il ne tourne que pour l'UE effectivement modifiée, plutôt que pour toutes.
+  const ueAggregates = useMemo<Record<string, Agg>>(() => {
+    const result: Record<string, Agg> = {};
     if (!releve) return result;
     for (const [code, ue] of Object.entries(releve.ues)) {
-      result[code] = ueMoyenne(ue, releve, overrides, code);
+      result[code] = ueAggregate(ue, releve, overrides, code);
     }
     return result;
   }, [releve, overrides]);
+
+  const ueMoyennes = useMemo<Record<string, number | null>>(() => {
+    const result: Record<string, number | null> = {};
+    for (const [code, aggregate] of Object.entries(ueAggregates)) result[code] = aggregate.value;
+    return result;
+  }, [ueAggregates]);
 
   const moyenneSimulee = useMemo(
     () => (releve ? moyenneGenerale(releve.ues, ueMoyennes) : null),
@@ -89,29 +99,41 @@ export function useSimulation(
 
   const hasSimulation = Object.keys(overrides).length > 0;
 
-  function updateOverrides(update: (prev: Record<string, number>) => Record<string, number>) {
-    setSim((prev) => {
-      if (prev.semestreId !== semestreId) return prev;
-      return { semestreId: prev.semestreId, overrides: update(prev.overrides) };
-    });
-  }
+  const updateOverrides = useCallback(
+    (update: (prev: Record<string, number>) => Record<string, number>) => {
+      setSim((prev) => {
+        if (prev.semestreId !== semestreId) return prev;
+        return { semestreId: prev.semestreId, overrides: update(prev.overrides) };
+      });
+    },
+    [semestreId]
+  );
 
-  function handleOverrideChange(key: string, value: number | undefined) {
-    updateOverrides((prev) => {
-      const next = { ...prev };
-      if (value === undefined) delete next[key];
-      else next[key] = value;
-      return next;
-    });
-  }
+  // useCallback, sinon ces fonctions changent d'identité à chaque rendu du tableau de bord
+  // et suffisent à elles seules à annuler le memo() de UeTable — donc à re-rendre toutes
+  // les UE de la page à chaque caractère saisi dans un champ de note.
+  const handleOverrideChange = useCallback(
+    (key: string, value: number | undefined) => {
+      updateOverrides((prev) => {
+        const next = { ...prev };
+        if (value === undefined) delete next[key];
+        else next[key] = value;
+        return next;
+      });
+    },
+    [updateOverrides]
+  );
 
-  function handleApplyMany(keys: string[], value: number) {
-    updateOverrides((prev) => {
-      const next = { ...prev };
-      for (const k of keys) next[k] = value;
-      return next;
-    });
-  }
+  const handleApplyMany = useCallback(
+    (keys: string[], value: number) => {
+      updateOverrides((prev) => {
+        const next = { ...prev };
+        for (const k of keys) next[k] = value;
+        return next;
+      });
+    },
+    [updateOverrides]
+  );
 
   async function handleReset() {
     if (!semestreId) return;
@@ -137,6 +159,7 @@ export function useSimulation(
     overrides,
     selectedKey,
     setSelectedKey,
+    ueAggregates,
     ueMoyennes,
     moyenneSimulee,
     pending,

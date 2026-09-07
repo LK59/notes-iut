@@ -374,7 +374,23 @@ def _count_evaluations(releve: dict) -> int:
     )
 
 
-def _current_semestre_with_releve(scodoc: ScodocSession, semestres: list) -> tuple[str, dict] | None:
+def _bootstrap_releve(bootstrap: dict | None, semestre_id: str) -> dict | None:
+    """Relevé embarqué dans la réponse dataPremièreConnexion, s'il porte bien sur le semestre
+    demandé. Il est produit par l'appel qu'on vient de faire, donc aussi frais qu'un appel
+    relevéEtudiant — s'en servir économise un aller-retour vers le portail à chaque cycle de
+    polling, pour chaque abonné."""
+    releve = (bootstrap or {}).get("relevé")
+    if not isinstance(releve, dict) or not isinstance(releve.get("ues"), dict):
+        return None
+    embedded_id = releve.get("formsemestre_id")
+    if embedded_id is None or str(embedded_id) != semestre_id:
+        return None
+    return releve
+
+
+def _current_semestre_with_releve(
+    scodoc: ScodocSession, semestres: list, bootstrap: dict | None = None
+) -> tuple[str, dict] | None:
     """Renvoie (formsemestre_id, relevé) du semestre à surveiller.
 
     Prendre bêtement le dernier semestre ne marche pas à la rentrée : ScoDoc crée le
@@ -390,7 +406,9 @@ def _current_semestre_with_releve(scodoc: ScodocSession, semestres: list) -> tup
         semestre_id = str(semestre.get("formsemestre_id") or "")
         if not semestre_id:
             continue
-        releve = validate_releve_payload(scodoc.releve_etudiant(semestre_id))["relevé"]
+        releve = _bootstrap_releve(bootstrap, semestre_id)
+        if releve is None:
+            releve = validate_releve_payload(scodoc.releve_etudiant(semestre_id))["relevé"]
         if fallback is None:
             fallback = (semestre_id, releve)
         if _count_evaluations(releve) > 0:
@@ -456,7 +474,7 @@ def _push_poll_user(username: str) -> None:
             cache.mark_push_poll_success(_username, None, 0, False)
             _log_event("push.poll.no_semestres", username_hash=_safe_hash(_username))
             return
-        current = _current_semestre_with_releve(scodoc, semestres)
+        current = _current_semestre_with_releve(scodoc, semestres, bootstrap)
         if current is None:
             cache.mark_push_poll_success(_username, None, 0, False)
             _log_event("push.poll.no_current_semestre", username_hash=_safe_hash(_username))

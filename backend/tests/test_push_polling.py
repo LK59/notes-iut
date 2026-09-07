@@ -245,3 +245,30 @@ def test_decision_non_memorisee_si_la_notification_na_pas_pu_partir(monkeypatch)
     admis = _releve([], {"situation": "Admis"})
     assert pp._maybe_notify_decision("etu", "984", admis) == (0, True)
     assert cache.get_push_decision_state("etu") == ("984", "")  # inchangé, retentera
+
+
+def test_le_releve_embarque_dans_le_bootstrap_evite_un_appel_au_portail():
+    """dataPremièreConnexion renvoie déjà le relevé du dernier semestre : le refetcher à
+    chaque cycle doublait les appels au portail pour chaque abonné."""
+    releve = _releve([{"id": 1, "note": {"value": "12"}}])
+    releve["formsemestre_id"] = 1080
+    scodoc = _FakeScodoc({})
+    semestres = [{"formsemestre_id": 1080, "semestre_id": 5, "annee_scolaire": "2026/2027"}]
+
+    semestre_id, obtenu = _current_semestre_with_releve(scodoc, semestres, {"relevé": releve})
+
+    assert (semestre_id, obtenu) == ("1080", releve)
+    assert scodoc.calls == []
+
+
+def test_le_releve_embarque_est_ignore_sil_porte_sur_un_autre_semestre():
+    autre = _releve([{"id": 9, "note": {"value": "12"}}])
+    autre["formsemestre_id"] = 984
+    attendu = _releve([{"id": 1, "note": {"value": "15"}}])
+    scodoc = _FakeScodoc({"1080": attendu})
+    semestres = [{"formsemestre_id": 1080, "semestre_id": 5, "annee_scolaire": "2026/2027"}]
+
+    semestre_id, obtenu = _current_semestre_with_releve(scodoc, semestres, {"relevé": autre})
+
+    assert (semestre_id, obtenu) == ("1080", attendu)
+    assert scodoc.calls == ["1080"]

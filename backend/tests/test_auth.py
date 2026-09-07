@@ -21,7 +21,8 @@ def _fake_scodoc_session():
 def _login(client, headers, username, password, remember=False, max_attempts=50):
     """POST /api/login lance le job en tâche de fond (voir main.py) : on poll le statut
     jusqu'à résolution, comme le fait le frontend, plutôt que d'attendre une réponse
-    synchrone qui n'existe plus."""
+    synchrone qui n'existe plus. Le job_id passe par le corps de la requête et non par
+    l'URL, qui finirait dans les logs d'accès."""
     resp = client.post(
         "/api/login",
         json={"username": username, "password": password, "remember": remember},
@@ -31,7 +32,7 @@ def _login(client, headers, username, password, remember=False, max_attempts=50)
         return resp
     job_id = resp.json()["job_id"]
     for _ in range(max_attempts):
-        status_resp = client.get(f"/api/login/status/{job_id}", headers=headers)
+        status_resp = client.post("/api/login/status", json={"job_id": job_id}, headers=headers)
         if status_resp.status_code != 200 or status_resp.json().get("status") != "pending":
             return status_resp
         time.sleep(0.02)
@@ -130,13 +131,13 @@ def test_login_status_reste_lisible_apres_une_premiere_lecture(client, api_heade
         )
         job_id = resp.json()["job_id"]
         for _ in range(50):
-            first = client.get(f"/api/login/status/{job_id}", headers=api_headers)
+            first = client.post("/api/login/status", json={"job_id": job_id}, headers=api_headers)
             if first.json().get("status") != "pending":
                 break
             time.sleep(0.02)
 
     assert first.json()["status"] == "ok"
-    again = client.get(f"/api/login/status/{job_id}", headers=api_headers)
+    again = client.post("/api/login/status", json={"job_id": job_id}, headers=api_headers)
     assert again.status_code == 200
     assert again.json() == first.json()
     assert "sid" in again.cookies
@@ -206,3 +207,48 @@ def test_refresh_rate_limit_est_compte_par_token_pas_par_ip(client, api_headers)
         resp = client.post("/api/refresh", headers=api_headers)
         assert resp.status_code != 429
     assert resp.json()["error"]["code"] == "REMEMBER_TOKEN_MISSING"
+
+
+def test_ancienne_url_de_statut_consomme_le_job(client, api_headers):
+    """L'URL avec le job_id en segment est journalisée par uvicorn : on la garde le temps que
+    les onglets ouverts pendant le déploiement finissent leur login, mais le job y est
+    consommé à la première lecture pour ne pas rester rejouable depuis les logs."""
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        resp = client.post(
+            "/api/login",
+            json={"username": "toto", "password": "secret"},
+            headers=api_headers,
+        )
+        job_id = resp.json()["job_id"]
+        for _ in range(50):
+            first = client.get(f"/api/login/status/{job_id}", headers=api_headers)
+            if first.json().get("status") != "pending":
+                break
+            time.sleep(0.02)
+
+    assert first.json()["status"] == "ok"
+    assert client.get(f"/api/login/status/{job_id}", headers=api_headers).status_code == 404
+
+
+def test_job_termine_expire_apres_son_delai_de_grace(client, api_headers):
+    from app.routes import auth as auth_routes
+
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        resp = client.post(
+            "/api/login",
+            json={"username": "toto", "password": "secret"},
+            headers=api_headers,
+        )
+        job_id = resp.json()["job_id"]
+        for _ in range(50):
+            first = client.post("/api/login/status", json={"job_id": job_id}, headers=api_headers)
+            if first.json().get("status") != "pending":
+                break
+            time.sleep(0.02)
+
+    assert first.json()["status"] == "ok"
+    with auth_routes._login_jobs_lock:
+        auth_routes._login_jobs[job_id]["read_at"] = time.time() - auth_routes.LOGIN_JOB_GRACE_SECONDS - 1
+    auth_routes._cleanup_login_jobs()
+
+    assert client.post("/api/login/status", json={"job_id": job_id}, headers=api_headers).status_code == 404

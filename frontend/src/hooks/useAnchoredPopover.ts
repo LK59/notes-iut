@@ -47,18 +47,29 @@ export function useAnchoredPopover<T extends HTMLElement = HTMLButtonElement>(
 
   useEffect(() => {
     if (!open) return;
-    const onGeometryChange = () => place();
+    // Un rendu par évènement de défilement suffisait à saccader l'ouverture du menu sur
+    // mobile : getBoundingClientRect + setState à chaque évènement. Une frame suffit.
+    let frame: number | null = null;
+    const schedulePlace = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        place();
+      });
+    };
+    const onGeometryChange = () => schedulePlace();
     // En phase de capture pour suivre l'ancre quel que soit le conteneur qui défile —
     // mais le panneau est lui-même défilable, et faire défiler son contenu n'a aucune
     // raison de le repositionner (un rendu par évènement de défilement, pour rien).
     const onScroll = (event: Event) => {
       if (panelRef.current?.contains(event.target as Node)) return;
-      place();
+      schedulePlace();
     };
     window.addEventListener("resize", onGeometryChange);
     window.addEventListener("orientationchange", onGeometryChange);
     window.addEventListener("scroll", onScroll, true);
     return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", onGeometryChange);
       window.removeEventListener("orientationchange", onGeometryChange);
       window.removeEventListener("scroll", onScroll, true);
