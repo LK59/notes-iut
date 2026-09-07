@@ -7,7 +7,12 @@ import time
 from .db import _connect
 
 WINDOW_SECONDS = 300
-MAX_ATTEMPTS_IP = 10
+# Plafond du login initial par IP. Volontairement large : au Wi-Fi de l'IUT comme en 4G, une
+# promo entière partage une poignée d'IP publiques, et un lundi matin une dizaine de connexions
+# en cinq minutes est parfaitement normal. Ce qui protège réellement contre le bourrage
+# d'identifiants, c'est le compteur par compte ci-dessous — une attaque distribuée sur un seul
+# compte reste bloquée à 20 essais, quelle que soit l'IP d'origine.
+MAX_ATTEMPTS_IP = 40
 MAX_ATTEMPTS_USER = 20
 # Wi-Fi de l'IUT, CGNAT mobile : des dizaines d'étudiants partagent une seule IP publique.
 # Un plafond de 10 par IP suffit pour du login interactif, mais pas pour une opération

@@ -69,8 +69,12 @@ def test_login_invalid_credentials(client, api_headers):
 
 
 def test_login_rate_limited_after_too_many_attempts(client, api_headers):
+    """Le verrou qui compte vraiment est celui par compte : le plafond par IP est large,
+    parce qu'une promo entière partage une poignée d'IP publiques."""
+    from app.ratelimit import MAX_ATTEMPTS_USER
+
     with patch("app.routes.auth.cas_login", side_effect=InvalidCredentials()):
-        for _ in range(10):
+        for _ in range(MAX_ATTEMPTS_USER):
             _login(client, api_headers, "flood", "wrong")
         resp = client.post(
             "/api/login",
@@ -79,6 +83,15 @@ def test_login_rate_limited_after_too_many_attempts(client, api_headers):
         )
     assert resp.status_code == 429
     assert resp.json()["error"]["code"] == "RATE_LIMITED"
+
+
+def test_login_plusieurs_comptes_depuis_une_ip_partagee(client, api_headers):
+    """Wi-Fi de l'IUT, lundi matin : une dizaine d'étudiants se connectent dans la même
+    fenêtre de cinq minutes depuis la même IP publique. Aucun ne doit être refusé."""
+    with patch("app.routes.auth.cas_login", return_value=_fake_scodoc_session()):
+        for index in range(15):
+            resp = _login(client, api_headers, f"etudiant{index}", "secret")
+            assert resp.status_code == 200, f"étudiant {index} refusé"
 
 
 def test_me_unauthenticated(client):
@@ -200,10 +213,10 @@ def test_preferences_push_signalent_un_abonnement_inconnu_du_serveur(client, api
 
 def test_refresh_rate_limit_est_compte_par_token_pas_par_ip(client, api_headers):
     """Derrière le Wi-Fi de l'IUT ou un CGNAT, toute une promo partage une IP : un plafond
-    de 10 par IP faisait tomber tout le monde sur « Trop de tentatives »."""
-    from app.ratelimit import MAX_ATTEMPTS_IP
+    serré par IP faisait tomber tout le monde sur « Trop de tentatives »."""
+    from app.ratelimit import MAX_ATTEMPTS_USER
 
-    for _ in range(MAX_ATTEMPTS_IP + 2):
+    for _ in range(MAX_ATTEMPTS_USER):
         resp = client.post("/api/refresh", headers=api_headers)
         assert resp.status_code != 429
     assert resp.json()["error"]["code"] == "REMEMBER_TOKEN_MISSING"
