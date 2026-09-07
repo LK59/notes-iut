@@ -99,6 +99,23 @@ export function recordGradeHistory(semestreId: string, previous: Releve | null, 
   return loadHistory(semestreId);
 }
 
+/**
+ * Date de première publication connue, par évaluation. C'est la seule source de datation
+ * dont on dispose : ScoDoc ne dit pas QUAND une note a été saisie, on ne sait que quand
+ * l'app l'a découverte. Les évaluations absentes de l'historique (publiées avant
+ * l'installation, ou sorties des 80 entrées conservées) n'ont pas de date et sont traitées
+ * comme connues depuis toujours par moyenneProgression().
+ */
+export function publicationDates(items: GradeHistoryItem[]): Record<number, string> {
+  const dates: Record<number, string> = {};
+  for (const item of items) {
+    if (item.newValue === null) continue;
+    const known = dates[item.evaluationId];
+    if (!known || item.discoveredAt < known) dates[item.evaluationId] = item.discoveredAt;
+  }
+  return dates;
+}
+
 export function getGradeHistory(semestreId: string | null): GradeHistoryItem[] {
   return semestreId ? loadHistory(semestreId) : [];
 }

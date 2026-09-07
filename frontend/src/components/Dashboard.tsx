@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   clearServerCache,
@@ -9,6 +9,8 @@ import {
   type ReauthWarning,
 } from "../api";
 import { clearDataCache } from "../offlineCache";
+import { publicationDates } from "../gradeHistory";
+import { countEvaluations, moyenneProgression } from "../simulator";
 import { semestreLabel, semestreLabelShort } from "../semestreLabel";
 import UeTable from "./UeTable";
 import SemestreSummary from "./SemestreSummary";
@@ -91,6 +93,7 @@ export default function Dashboard({
     bootstrapError,
     semestreId,
     setSemestreId,
+    prevSemestreId,
     releve,
     absences,
     newIds,
@@ -123,11 +126,20 @@ export default function Dashboard({
 
   const { printMode, setPrintMode } = usePrintExport();
 
+  // Avant les retours anticipés ci-dessous : l'ordre des hooks doit rester stable.
+  const progression = useMemo(
+    () => (releve ? moyenneProgression(releve, publicationDates(gradeHistory)) : []),
+    [releve, gradeHistory]
+  );
+
   if (isLoading) return <Centered>Chargement de tes relevés…</Centered>;
   if (bootstrapError) return <DashboardError message={(bootstrapError as Error).message} onLoggedOut={onLoggedOut} />;
   if (!bootstrap || !releve) return <Centered>Chargement du relevé…</Centered>;
 
   const ueEntries = Object.entries(releve.ues).filter(([, ue]) => ue.type !== 1);
+  // ScoDoc crée le formsemestre de la nouvelle année dès l'inscription : sans évaluation,
+  // le tableau de bord affichait un 0,00/20 et un rang de promo parfaitement trompeurs.
+  const semestreStarted = countEvaluations(releve) > 0;
   const currentSemestre = bootstrap.semestres.find((s) => s.formsemestre_id === semestreId);
 
   return (
@@ -267,6 +279,21 @@ export default function Dashboard({
 
         {releve.message && <Notice tone="warn">{releve.message}</Notice>}
 
+        {!semestreStarted && (
+          <Notice
+            action={
+              prevSemestreId ? (
+                <Button tone="primary" onClick={() => setSemestreId(prevSemestreId)}>
+                  Voir le semestre précédent
+                </Button>
+              ) : undefined
+            }
+          >
+            Aucune évaluation sur ce semestre pour l'instant. Tes notes s'afficheront ici dès les
+            premières publications, et les notifications restent actives d'ici là.
+          </Notice>
+        )}
+
         <GradeHistoryPanel items={gradeHistory} />
 
         <div id="resume" className="scroll-mt-32">
@@ -363,6 +390,7 @@ export default function Dashboard({
               overrides={overrides}
               ueMoyennes={ueMoyennes}
               evolution={evolution}
+              progression={progression}
               allReleves={allReleves}
               semestres={bootstrap.semestres}
               currentSemestreId={semestreId}

@@ -145,7 +145,12 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     _ensure_columns(
         conn,
         "push_poll_state",
-        {"idle_warning_token_hash": "TEXT", "absolute_warning_token_hash": "TEXT"},
+        {
+            "idle_warning_token_hash": "TEXT",
+            "absolute_warning_token_hash": "TEXT",
+            "decision_semestre_id": "TEXT",
+            "decision_hash": "TEXT",
+        },
     )
     conn.execute(
         """

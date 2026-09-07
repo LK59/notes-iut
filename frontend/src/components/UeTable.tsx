@@ -55,7 +55,7 @@ function UeTable({
   const [collapsedModules, setCollapsedModules] = useState<Set<string>>(new Set());
   const isOpen = printMode || open;
 
-  const aggregate = ueAggregate(ue, releve, overrides);
+  const aggregate = ueAggregate(ue, releve, overrides, ueCode);
   const simulated = ueIsSimulated(ue, releve, overrides);
   const rang = ueRang(ue);
   const decision = releve.semestre.decision_ue?.find((d) => d.acronyme === ueCode);
@@ -144,7 +144,7 @@ function UeTable({
                   <div className="space-y-1.5">
                     {entries.map(([moduleCode, mod]) => {
                       const summary = (group === "ressources" ? ue.ressources : ue.saes)?.[moduleCode];
-                      const modAgg = moduleAggregate(mod, group, moduleCode, overrides);
+                      const modAgg = moduleAggregate(mod, group, moduleCode, overrides, ueCode);
                       const modSimulated = moduleIsSimulated(mod, group, moduleCode, overrides);
                       const hasEvaluations = Boolean(mod.evaluations?.length);
                       const moduleKey = `${group}-${moduleCode}`;

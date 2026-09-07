@@ -45,11 +45,11 @@ export default function ObjectiveCalculator({ releve, overrides, onApply }: Prop
         ? (candidate: Record<string, number>) => {
             const moyennes: Record<string, number | null> = {};
             for (const [code, ue] of Object.entries(releve.ues)) {
-              moyennes[code] = ueMoyenne(ue, releve, candidate);
+              moyennes[code] = ueMoyenne(ue, releve, candidate, code);
             }
             return moyenneGenerale(releve.ues, moyennes);
           }
-        : (candidate: Record<string, number>) => ueMoyenne(releve.ues[scope], releve, candidate);
+        : (candidate: Record<string, number>) => ueMoyenne(releve.ues[scope], releve, candidate, scope);
     return solveUniformTarget(overrides, pendingKeys, target, evaluate);
   }, [releve, overrides, pendingKeys, target, scope]);
 

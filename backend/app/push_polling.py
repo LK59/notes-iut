@@ -95,6 +95,124 @@ def _find_new_grades(old_snapshot: dict[str, str | None], new_snapshot: dict[str
     return new_grades
 
 
+def _find_updated_grades(old_snapshot: dict[str, str | None], new_snapshot: dict[str, str | None], releve: dict) -> list[dict]:
+    """Notes déjà publiées dont la valeur a changé : correction après réclamation, saisie
+    rectifiée, rattrapage reporté sur la même évaluation. Ça ne déclenchait aucune
+    notification — seule la première publication en émettait une.
+
+    Le retrait d'une note (valeur → "~") n'est volontairement PAS notifié : ScoDoc repasse
+    parfois transitoirement par "~" pendant un recalcul, et une fausse alerte « ta note a
+    disparu » est plus anxiogène qu'utile. Le snapshot est quand même mis à jour, donc la
+    republication repartira comme une nouvelle note."""
+    updated = []
+    for group in ("ressources", "saes"):
+        for mod_code, mod in (releve.get(group) or {}).items():
+            mod_titre = mod.get("titre") or mod_code
+            for ev in (mod.get("evaluations") or []):
+                ev_id = str(ev.get("id", ""))
+                if not ev_id or ev_id not in old_snapshot:
+                    continue
+                old_value = _numeric_note_value(old_snapshot.get(ev_id))
+                new_value = _numeric_note_value(new_snapshot.get(ev_id))
+                if old_value is None or new_value is None or old_value == new_value:
+                    continue
+                updated.append({
+                    "id": ev_id,
+                    "description": ev.get("description") or "Évaluation",
+                    "module": f"{mod_code} – {mod_titre}",
+                    "value": new_snapshot.get(ev_id),
+                    "previous": old_snapshot.get(ev_id),
+                })
+    return updated
+
+
+def _updated_message_payload(updated: list[dict], include_grade_value: bool) -> dict:
+    tag = _grade_tag(updated).replace("notes-iut-grade", "notes-iut-grade-updated")
+    if len(updated) > 1:
+        return {
+            "title": "Plusieurs notes ont été modifiées",
+            "body": "Ouvre Notes IUT pour voir les nouvelles valeurs.",
+            "url": "/",
+            "tag": tag,
+        }
+    g = updated[0]
+    if include_grade_value:
+        return {
+            "title": f"Note modifiée : {g['description']}",
+            "body": f"{g['module']} — {g['previous']} → {g['value']}/20",
+            "url": "/",
+            "tag": tag,
+        }
+    return {
+        "title": "Une note a été modifiée",
+        "body": f"{g['module']} — {g['description']}",
+        "url": "/",
+        "tag": tag,
+    }
+
+
+# ── Décision de jury ────────────────────────────────────────────────────────
+
+def _decision_state(releve: dict) -> tuple[str, str]:
+    """(empreinte, résumé lisible) de la décision de jury du semestre. Empreinte vide quand
+    aucune décision n'est publiée — c'est le cas onze mois sur douze."""
+    semestre = releve.get("semestre") or {}
+    parts = {
+        "situation": semestre.get("situation") or "",
+        "annee": ((semestre.get("decision_annee") or {}) or {}).get("code") or "",
+        "ues": sorted(
+            f"{d.get('acronyme')}:{d.get('code')}" for d in (semestre.get("decision_ue") or [])
+        ),
+        "rcue": sorted(str(d.get("code")) for d in (semestre.get("decision_rcue") or [])),
+    }
+    if not any(parts.values()):
+        return "", ""
+    fingerprint = hashlib.sha256(
+        json.dumps(parts, ensure_ascii=False, sort_keys=True).encode()
+    ).hexdigest()[:16]
+    resume = parts["situation"] or parts["annee"] or "Ouvre Notes IUT pour la consulter."
+    return fingerprint, resume
+
+
+def _maybe_notify_decision(username: str, semestre_id: str, releve: dict) -> tuple[int, bool]:
+    """Notifie la publication (ou la modification) d'une décision de jury. Renvoie
+    (notifications envoyées, empreinte à conserver en attente) — comme pour les notes, on ne
+    mémorise pas une décision qu'on n'a pas réussi à annoncer."""
+    fingerprint, resume = _decision_state(releve)
+    known_semestre, known_fingerprint = cache.get_push_decision_state(username)
+
+    # Première observation de ce semestre : on mémorise sans notifier, sinon tout étudiant
+    # déjà passé en jury recevrait une notification au premier poll.
+    if known_semestre != semestre_id or known_fingerprint is None:
+        cache.set_push_decision_state(username, semestre_id, fingerprint)
+        return 0, False
+    if not fingerprint or fingerprint == known_fingerprint:
+        cache.set_push_decision_state(username, semestre_id, fingerprint)
+        return 0, False
+
+    subs = cache.get_push_subscriptions(username)
+    sent = _send_push(
+        subs,
+        {
+            "title": "Décision de jury publiée",
+            "body": resume,
+            "url": "/",
+            "tag": f"notes-iut-decision-{fingerprint}",
+        },
+    )
+    _log_event(
+        "push.poll.decision",
+        username_hash=_safe_hash(username),
+        semestre_id=semestre_id,
+        subscriptions=len(subs),
+        notifications_sent=sent,
+    )
+    if subs and sent == 0:
+        return 0, True
+    cache.set_push_decision_state(username, semestre_id, fingerprint)
+    return sent, False
+
+
 def _grade_tag(new_grades: list[dict]) -> str:
     """Un tag distinct par lot de notes : avec un tag constant, deux notifications reçues
     pendant que le téléphone est verrouillé se remplacent l'une l'autre et la première est
@@ -357,38 +475,56 @@ def _push_poll_user(username: str) -> None:
             )
             return
         new_grades = _find_new_grades(stored_snapshot, current_snapshot, releve)
+        updated_grades = _find_updated_grades(stored_snapshot, current_snapshot, releve)
         sent = 0
         subs: list[dict] = []
-        if new_grades:
+        if new_grades or updated_grades:
             subs = cache.get_push_subscriptions(_username)
-            _log_event("push.poll.new_grades", username_hash=_safe_hash(_username), count=len(new_grades), subscriptions=len(subs))
+            _log_event(
+                "push.poll.new_grades",
+                username_hash=_safe_hash(_username),
+                count=len(new_grades),
+                updated=len(updated_grades),
+                subscriptions=len(subs),
+            )
             for sub in subs:
-                sent += _send_push([sub], _push_message_payload(new_grades, sub.get("include_grade_value", False)))
+                include_value = sub.get("include_grade_value", False)
+                if new_grades:
+                    sent += _send_push([sub], _push_message_payload(new_grades, include_value))
+                if updated_grades:
+                    sent += _send_push([sub], _updated_message_payload(updated_grades, include_value))
         else:
             _log_event("push.poll.no_new_grade", username_hash=_safe_hash(_username), semestre_id=semestre_id)
+        decision_sent, decision_pending = _maybe_notify_decision(_username, semestre_id, releve)
         # Avancer le snapshot alors qu'aucun envoi n'a abouti marquerait la note comme « déjà
         # vue » : elle ne serait plus jamais notifiée, alors que la panne (service de push
         # injoignable, 500 côté FCM/APNs) est temporaire. On garde donc l'ancien snapshot et
         # on retentera au prochain cycle. Sans aucun abonnement en revanche il n'y a personne
-        # à prévenir, et retenir le snapshot indéfiniment n'apporterait rien.
-        notification_pending = bool(new_grades) and bool(subs) and sent == 0
-        if notification_pending:
+        # à prévenir, et retenir le snapshot indéfiniment n'apporterait rien. `sent` ne compte
+        # ici que les notifications de notes : une décision de jury partie ne doit pas faire
+        # passer pour « annoncées » des notes dont l'envoi a échoué.
+        notification_pending = bool(new_grades or updated_grades) and bool(subs) and sent == 0
+        sent += decision_sent
+        if notification_pending or decision_pending:
             _log_event(
                 "push.poll.snapshot_held",
                 username_hash=_safe_hash(_username),
                 semestre_id=semestre_id,
                 new_grades=len(new_grades),
+                updated_grades=len(updated_grades),
+                decision_held=decision_pending,
             )
         else:
             cache.set_grade_snapshot(_username, semestre_id, current_snapshot)
-        cache.mark_push_poll_success(_username, semestre_id, len(new_grades), sent > 0)
+        cache.mark_push_poll_success(_username, semestre_id, len(new_grades) + len(updated_grades), sent > 0)
         _log_event(
             "push.poll.ok",
             username_hash=_safe_hash(_username),
             semestre_id=semestre_id,
             new_grades=len(new_grades),
+            updated_grades=len(updated_grades),
             notifications_sent=sent,
-            snapshot_held=notification_pending,
+            snapshot_held=notification_pending or decision_pending,
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
     except InvalidCredentials:

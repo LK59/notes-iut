@@ -72,6 +72,8 @@ export interface Releve {
   formation: { titre: string };
   semestre: {
     numero: number;
+    date_debut?: string;
+    date_fin?: string;
     notes: NoteValue;
     rang: { value: number; total: number; groupes?: Record<string, { value: number; total: number }> };
     absences?: { injustifie: number; total: number };

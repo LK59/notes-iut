@@ -300,6 +300,40 @@ def push_poll_stats(limit: int = 200) -> dict:
     }
 
 
+# ── Décision de jury (pour le polling push) ───────────────────────────────────
+
+def get_push_decision_state(username: str) -> tuple[str | None, str | None]:
+    """(semestre observé, empreinte de la décision). Empreinte None = jamais observé, donc
+    première visite : mémoriser sans notifier."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT decision_semestre_id, decision_hash FROM push_poll_state WHERE username = ?",
+        (username,),
+    ).fetchone()
+    if not row or row[0] is None:
+        return (None, None)
+    return (row[0], row[1] or "")
+
+
+def set_push_decision_state(username: str, semestre_id: str, fingerprint: str) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO push_poll_state (username, decision_semestre_id, decision_hash)
+            VALUES (?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                decision_semestre_id = excluded.decision_semestre_id,
+                decision_hash = excluded.decision_hash
+            """,
+            (username, semestre_id, fingerprint),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ── Snapshots de notes (pour le polling push) ─────────────────────────────────
 
 def get_grade_snapshot(username: str, semestre_id: str) -> dict | None:

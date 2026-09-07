@@ -160,7 +160,7 @@ export default function PrintExport({ releve, overrides, username, semestreTitle
       </div>
 
       {ueEntries.map(([code, ue]) => {
-        const ueAgg = ueAggregate(ue, releve, overrides);
+        const ueAgg = ueAggregate(ue, releve, overrides, code);
         const rang = ueRang(ue);
         const modules: { code: string; mod: ModuleEntry; group: "ressources" | "saes" }[] = [
           ...Object.keys(ue.ressources || {})
@@ -190,7 +190,7 @@ export default function PrintExport({ releve, overrides, username, semestreTitle
               </thead>
               <tbody>
                 {modules.map(({ code: moduleCode, mod, group }) => {
-                  const modAgg = moduleAggregate(mod, group, moduleCode, overrides);
+                  const modAgg = moduleAggregate(mod, group, moduleCode, overrides, code);
                   const summary = (group === "ressources" ? ue.ressources : ue.saes)?.[moduleCode];
                   return (
                     <>

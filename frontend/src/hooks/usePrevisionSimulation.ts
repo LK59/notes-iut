@@ -45,7 +45,7 @@ export function usePrevisionSimulation(semestreId: string, releve: Releve) {
 
   const ueMoyennes: Record<string, number | null> = {};
   for (const [code, ue] of Object.entries(releve.ues)) {
-    ueMoyennes[code] = ueMoyenne(ue, releve, overrides);
+    ueMoyennes[code] = ueMoyenne(ue, releve, overrides, code);
   }
   const moyenneSimulee = moyenneGenerale(releve.ues, ueMoyennes);
   const hasSimulation = Object.keys(overrides).length > 0;

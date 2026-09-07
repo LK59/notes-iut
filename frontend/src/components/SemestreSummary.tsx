@@ -1,5 +1,5 @@
 import type { Releve } from "../types";
-import { numericNoteValue } from "../simulator";
+import { countEvaluations, numericNoteValue } from "../simulator";
 import { Card } from "./ui";
 
 // Reprend les libellés du portail (correspondanceCodes) pour la décision de fin d'année.
@@ -35,11 +35,14 @@ export default function SemestreSummary({
   trend?: number | null;
 }) {
   const notes = releve.semestre.notes;
-  const moyenne = numericNoteValue(notes?.value);
+  // ScoDoc renvoie une moyenne de "00.00" et un rang "1 ex / 33" pour un semestre où
+  // personne n'a encore de note : affichés tels quels, ils se lisent comme un vrai 0/20.
+  const started = countEvaluations(releve) > 0;
+  const moyenne = started ? numericNoteValue(notes?.value) : null;
   const rang = releve.semestre.rang;
   const ects = releve.semestre.ECTS;
   const absences = releve.semestre.absences;
-  const decisionAnnee = releve.semestre.decision_annee?.code;
+  const decisionAnnee = started ? releve.semestre.decision_annee?.code : undefined;
   const decisionRcue = releve.semestre.decision_rcue ?? [];
   const etudiant = releve.etudiant;
   const nom = etudiant ? `${etudiant.prenom ?? ""} ${etudiant.nom ?? ""}`.trim() : "";
@@ -48,12 +51,12 @@ export default function SemestreSummary({
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pt-4 pb-3">
         <div>
-          <p className="text-xs text-muted">Moyenne générale</p>
+          <p className="text-xs text-muted">{started ? "Moyenne générale" : "Semestre à venir"}</p>
           <p className="flex items-baseline gap-2">
             <span className="mono text-[2.75rem] leading-none font-medium tracking-tight text-fg">
               {moyenne !== null ? moyenne.toFixed(2) : "—"}
             </span>
-            <span className="text-sm text-subtle">/ 20</span>
+            <span className="text-sm text-subtle">{started ? "/ 20" : debutLabel(releve)}</span>
             {trend !== undefined && trend !== null && Math.abs(trend) >= 0.01 && (
               <span
                 title={`${trend > 0 ? "+" : ""}${trend.toFixed(2)} point vs le semestre précédent`}
@@ -65,7 +68,7 @@ export default function SemestreSummary({
           </p>
         </div>
 
-        {rang && (
+        {started && rang && (
           <div className="text-right">
             <p className="text-xs text-muted">Rang</p>
             <p className="mono text-xl text-fg">
@@ -77,7 +80,7 @@ export default function SemestreSummary({
       </div>
 
       {/* Repères de promo : une petite échelle vaut mieux que trois nombres alignés. */}
-      {moyenne !== null && notes?.min !== undefined && notes?.max !== undefined && (
+      {started && moyenne !== null && notes?.min !== undefined && notes?.max !== undefined && (
         <PromoScale
           min={numericNoteValue(notes.min)}
           moy={numericNoteValue(notes.moy)}
@@ -86,8 +89,12 @@ export default function SemestreSummary({
         />
       )}
 
-      <dl className="grid grid-cols-2 sm:grid-cols-4 border-t border-line divide-x divide-line">
-        <Stat label="Moy. promo" value={fmtNote(numericNoteValue(notes?.moy))} />
+      <dl
+        className={`grid grid-cols-2 border-t border-line divide-x divide-line ${
+          releve.semestre.situation ? "sm:grid-cols-4" : "sm:grid-cols-3"
+        }`}
+      >
+        <Stat label="Moy. promo" value={started ? fmtNote(numericNoteValue(notes?.moy)) : "—"} />
         <Stat
           label="ECTS"
           value={ects ? `${ects.acquis ?? "-"} / ${ects.total ?? "-"}` : "—"}
@@ -97,7 +104,11 @@ export default function SemestreSummary({
           value={absences ? `${absences.injustifie} / ${absences.total}` : "—"}
           hint={absences ? "non justifiées sur total (demi-journées)" : undefined}
         />
-        <Stat label="Décision" value={releve.semestre.situation || "—"} small />
+        {/* La décision de jury n'existe que quelques jours par an : une tuile figée sur
+            « — » onze mois sur douze n'apprend rien, autant rendre la place. */}
+        {releve.semestre.situation && (
+          <Stat label="Décision" value={releve.semestre.situation} small />
+        )}
       </dl>
 
       {(decisionAnnee || decisionRcue.length > 0) && (
@@ -166,6 +177,16 @@ function PromoScale({
       </div>
     </div>
   );
+}
+
+/** « à partir du 1 septembre » tant qu'aucune note n'existe : sans repère de date, un
+ * semestre vide ressemble à une panne de l'app. */
+function debutLabel(releve: Releve): string {
+  const debut = releve.semestre.date_debut;
+  if (!debut) return "pas encore de note";
+  const date = new Date(`${debut}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "pas encore de note";
+  return `à partir du ${date.toLocaleDateString("fr-FR", { day: "numeric", month: "long" })}`;
 }
 
 function Stat({

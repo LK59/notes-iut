@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Evaluation, ModuleEntry, Releve, Ue } from "./types";
 import {
+  countEvaluations,
   evaluationWeightInModule,
   fmt,
   moduleAggregate,
   moduleWeightInUe,
   moyenneGenerale,
+  moyenneProgression,
   newlyPublishedIds,
   numericNoteValue,
   pendingItems,
@@ -190,5 +192,87 @@ describe("fmt / round2", () => {
     expect(fmt(12.345)).toBe("12.35");
     expect(round2(12.345)).toBeCloseTo(12.35);
     expect(round2(null)).toBeNull();
+  });
+});
+
+describe("poids des évaluations dans une UE", () => {
+  /** Un module à deux évaluations, alimentant deux UE avec des poids différents. */
+  function makeReleveAvecPoids(): Releve {
+    const e1 = { ...makeEvaluation(1, 18, 1), poids: { A: 3, B: 1 } };
+    const e2 = { ...makeEvaluation(2, 6, 1), poids: { A: 1, B: 3 } };
+    const mod = makeModule("Module partagé", [e1, e2]);
+    const ue = (numero: number): Ue => ({
+      numero,
+      type: 0,
+      moyenne: { value: null },
+      ECTS: { acquis: 0, total: 5 },
+      ressources: { MOD: { moyenne: null, coef: 1 } },
+    });
+    return {
+      etudiant: { nom: "Doe", prenom: "Jane" },
+      formation: { titre: "BUT R&T" },
+      semestre: { numero: 1, notes: { value: null }, rang: { value: 1, total: 10 } },
+      ues: { A: ue(1), B: ue(2) },
+      ues_capitalisees: {},
+      ressources: { MOD: mod },
+      saes: {},
+    };
+  }
+
+  it("pondère chaque évaluation par coef × poids de l'UE", () => {
+    const releve = makeReleveAvecPoids();
+    // UE A : (18×3 + 6×1) / 4 = 15 ; UE B : (18×1 + 6×3) / 4 = 9
+    expect(ueMoyenne(releve.ues.A, releve, {}, "A")).toBeCloseTo(15);
+    expect(ueMoyenne(releve.ues.B, releve, {}, "B")).toBeCloseTo(9);
+  });
+
+  it("sans code d'UE, retombe sur la pondération par coefficient seul", () => {
+    const releve = makeReleveAvecPoids();
+    expect(ueMoyenne(releve.ues.A, releve, {})).toBeCloseTo(12); // (18 + 6) / 2
+  });
+
+  it("ignore une matrice de poids absente (relevés sans le champ)", () => {
+    const releve = makeReleve();
+    expect(ueMoyenne(releve.ues.A, releve, {}, "A")).toBeCloseTo(14);
+  });
+
+  it("retombe sur les coefficients si toutes les évaluations ont un poids nul dans l'UE", () => {
+    const releve = makeReleveAvecPoids();
+    releve.ressources.MOD.evaluations.forEach((e) => (e.poids = { A: 0, B: 1 }));
+    expect(ueMoyenne(releve.ues.A, releve, {}, "A")).toBeCloseTo(12);
+  });
+});
+
+describe("countEvaluations", () => {
+  it("compte les évaluations de toutes les ressources et SAÉ", () => {
+    expect(countEvaluations(makeReleve())).toBe(3);
+  });
+
+  it("vaut 0 sur un semestre créé mais pas encore démarré", () => {
+    const releve = makeReleve();
+    releve.ressources.MODA.evaluations = [];
+    releve.ressources.MODB.evaluations = [];
+    expect(countEvaluations(releve)).toBe(0);
+    expect(countEvaluations(null)).toBe(0);
+  });
+});
+
+describe("moyenneProgression", () => {
+  it("recalcule la moyenne à chaque date de publication", () => {
+    const releve = makeReleve();
+    // Éval 1 (16) découverte le 1er, éval 3 (8) le 5 ; l'éval 2 n'est pas datée, donc
+    // considérée connue depuis toujours.
+    const points = moyenneProgression(releve, { 1: "2026-03-01T09:00:00Z", 3: "2026-03-05T09:00:00Z" });
+
+    expect(points.map((p) => p.date)).toEqual(["2026-03-01", "2026-03-05"]);
+    // Au 1er : UE A = (16+12)/2 = 14, UE B sans note -> moyenne générale = 14
+    expect(points[0].moyenne).toBeCloseTo(14);
+    // Au 5 : UE A = 14 (5 ECTS), UE B = 8 (3 ECTS) -> (14×5 + 8×3) / 8 = 11.75
+    expect(points[1].moyenne).toBeCloseTo(11.75);
+  });
+
+  it("ne renvoie rien tant qu'une seule vague de notes est datée", () => {
+    expect(moyenneProgression(makeReleve(), { 1: "2026-03-01T09:00:00Z" })).toEqual([]);
+    expect(moyenneProgression(makeReleve(), {})).toEqual([]);
   });
 });

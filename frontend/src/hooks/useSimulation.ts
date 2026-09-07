@@ -74,7 +74,7 @@ export function useSimulation(
     const result: Record<string, number | null> = {};
     if (!releve) return result;
     for (const [code, ue] of Object.entries(releve.ues)) {
-      result[code] = ueMoyenne(ue, releve, overrides);
+      result[code] = ueMoyenne(ue, releve, overrides, code);
     }
     return result;
   }, [releve, overrides]);

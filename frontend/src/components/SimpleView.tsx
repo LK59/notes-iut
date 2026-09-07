@@ -50,7 +50,7 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
       {ueEntries.map(([code, ue]) => {
-        const aggregate = ueAggregate(ue, releve, overrides);
+        const aggregate = ueAggregate(ue, releve, overrides, code);
         const simulated = ueIsSimulated(ue, releve, overrides);
         const rang = ueRang(ue);
         const weight = ueWeightInGlobal(code, releve.ues);
@@ -69,7 +69,7 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
               group,
               mod,
               coef: summary?.coef,
-              aggregate: moduleAggregate(mod, group, moduleCode, overrides),
+              aggregate: moduleAggregate(mod, group, moduleCode, overrides, code),
               simulated: moduleIsSimulated(mod, group, moduleCode, overrides),
             },
           ];

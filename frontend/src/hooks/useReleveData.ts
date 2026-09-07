@@ -196,6 +196,7 @@ export function useReleveData(view: ViewMode) {
     bootstrapError,
     semestreId,
     setSemestreId,
+    prevSemestreId,
     releve,
     absences,
     newIds,

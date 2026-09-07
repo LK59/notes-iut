@@ -70,6 +70,26 @@ function weightedAggregate(items: { agg: Agg; weight: number }[]): Agg {
   return result;
 }
 
+/**
+ * Poids d'une évaluation dans la moyenne d'une UE donnée.
+ *
+ * En BUT, une évaluation porte un poids PAR UE (`poids: {RT1.4: 1, RT2.4: 0, …}`) en plus de
+ * son coefficient : deux UE alimentées par le même module peuvent pondérer différemment ses
+ * évaluations, voire en ignorer certaines. Ne pondérer que par `coef` revenait à supposer ces
+ * poids uniformes à l'intérieur d'un module — vrai sur les relevés observés jusqu'ici, donc
+ * sans écart visible, mais faux dès qu'un enseignant règle ses poids finement. On applique
+ * donc la formule de ScoDoc, coef × poids[UE].
+ *
+ * Hors contexte d'UE (moyenne d'un module affichée pour elle-même), seul `coef` s'applique.
+ */
+function evaluationWeight(evaluation: Evaluation, ueCode?: string): number {
+  const coef = toNumber(evaluation.coef, 1);
+  if (!ueCode) return coef;
+  const poids = evaluation.poids?.[ueCode];
+  if (poids === undefined || poids === null) return coef; // relevé sans matrice de poids
+  return coef * toNumber(poids, 1);
+}
+
 function evaluationAgg(evaluation: Evaluation, overrideValue: number | undefined): Agg {
   return {
     value: overrideValue ?? numericNoteValue(evaluation.note.value),
@@ -84,17 +104,28 @@ export function moduleAggregate(
   mod: ModuleEntry,
   group: "ressources" | "saes",
   moduleCode: string,
-  overrides: Record<string, number>
+  overrides: Record<string, number>,
+  /** UE dans laquelle ce module est agrégé, s'il y en a une : voir evaluationWeight. */
+  ueCode?: string
 ): Agg {
   if (!mod.evaluations || mod.evaluations.length === 0) {
     const manual = overrides[manualKey(group, moduleCode)];
     return { ...EMPTY_AGG, value: manual ?? null };
   }
-  const items = mod.evaluations.map((evaluation, idx) => {
-    const key = `${group}-${moduleCode}-${idx}`;
-    const overrideValue = key in overrides ? overrides[key] : undefined;
-    return { agg: evaluationAgg(evaluation, overrideValue), weight: toNumber(evaluation.coef, 1) };
-  });
+  const build = (withUe: boolean) =>
+    mod.evaluations.map((evaluation, idx) => {
+      const key = `${group}-${moduleCode}-${idx}`;
+      const overrideValue = key in overrides ? overrides[key] : undefined;
+      return {
+        agg: evaluationAgg(evaluation, overrideValue),
+        weight: evaluationWeight(evaluation, withUe ? ueCode : undefined),
+      };
+    });
+  let items = build(true);
+  // Module listé dans une UE mais dont toutes les évaluations y ont un poids nul : cas
+  // théoriquement impossible côté ScoDoc, mais on préfère la moyenne par coefficient à un
+  // trou dans le relevé.
+  if (ueCode && items.every((item) => item.weight === 0)) items = build(false);
   return weightedAggregate(items);
 }
 
@@ -113,7 +144,13 @@ export function moduleMoyenne(
  * moyenne d'UE recalculée ici (nécessaire pour supporter la simulation) serait systématiquement
  * inférieure à la vraie moyenne ScoDoc pour toute UE bénéficiant d'un bonus.
  */
-export function ueAggregate(ue: Ue, releve: Releve, overrides: Record<string, number>): Agg {
+export function ueAggregate(
+  ue: Ue,
+  releve: Releve,
+  overrides: Record<string, number>,
+  /** Code de l'UE, nécessaire pour lire la matrice de poids des évaluations. */
+  ueCode?: string
+): Agg {
   const items: { agg: Agg; weight: number }[] = [];
   for (const [group, summaries] of [
     ["ressources", ue.ressources] as const,
@@ -123,7 +160,10 @@ export function ueAggregate(ue: Ue, releve: Releve, overrides: Record<string, nu
     for (const [moduleCode, summary] of Object.entries(summaries)) {
       const mod = releve[group]?.[moduleCode];
       if (!mod) continue;
-      items.push({ agg: moduleAggregate(mod, group, moduleCode, overrides), weight: toNumber(summary.coef, 1) });
+      items.push({
+        agg: moduleAggregate(mod, group, moduleCode, overrides, ueCode),
+        weight: toNumber(summary.coef, 1),
+      });
     }
   }
   const agg = weightedAggregate(items);
@@ -134,8 +174,13 @@ export function ueAggregate(ue: Ue, releve: Releve, overrides: Record<string, nu
   return { ...agg, value: Math.min(20, Math.max(0, agg.value + bonus - malus)) };
 }
 
-export function ueMoyenne(ue: Ue, releve: Releve, overrides: Record<string, number>): number | null {
-  return ueAggregate(ue, releve, overrides).value;
+export function ueMoyenne(
+  ue: Ue,
+  releve: Releve,
+  overrides: Record<string, number>,
+  ueCode?: string
+): number | null {
+  return ueAggregate(ue, releve, overrides, ueCode).value;
 }
 
 /** Moyenne générale pondérée par les ECTS des UE (hors UE bonus/sport). */
@@ -152,6 +197,70 @@ export function moyenneGenerale(ues: Record<string, Ue>, ueMoyennes: Record<stri
   }
   if (totalPoids === 0) return null;
   return total / totalPoids;
+}
+
+/** Nombre total d'évaluations d'un relevé, tous modules confondus (notées ou non). Sert à
+ * reconnaître un semestre qui n'a pas encore démarré. */
+export function countEvaluations(releve: Releve | null | undefined): number {
+  if (!releve) return 0;
+  let total = 0;
+  for (const group of ["ressources", "saes"] as const) {
+    for (const mod of Object.values(releve[group] || {})) total += mod.evaluations?.length ?? 0;
+  }
+  return total;
+}
+
+export interface ProgressionPoint {
+  /** Jour ISO (YYYY-MM-DD) où au moins une note a été publiée. */
+  date: string;
+  moyenne: number | null;
+}
+
+/** Relevé restreint aux évaluations retenues par `keep` (les autres disparaissent des modules,
+ * donc des moyennes d'UE, exactement comme si elles n'étaient pas encore publiées). */
+function releveAtDate(releve: Releve, keep: (evaluationId: number) => boolean): Releve {
+  const filterGroup = (modules: Record<string, ModuleEntry>) =>
+    Object.fromEntries(
+      Object.entries(modules).map(([code, mod]) => [
+        code,
+        { ...mod, evaluations: (mod.evaluations ?? []).filter((evaluation) => keep(evaluation.id)) },
+      ])
+    );
+  return {
+    ...releve,
+    ressources: filterGroup(releve.ressources || {}),
+    saes: filterGroup(releve.saes || {}),
+  };
+}
+
+/**
+ * Moyenne générale telle qu'elle était après chaque vague de publication de notes.
+ *
+ * `publishedAt` vient de l'historique local (`gradeHistory`), seul endroit où l'on sache
+ * QUAND une note est apparue — ScoDoc ne date pas les publications. Une évaluation absente
+ * de l'historique est considérée comme connue depuis toujours : c'est le cas de toutes
+ * celles déjà publiées avant l'installation de l'app, et la courbe démarre donc à ce socle
+ * plutôt qu'à zéro.
+ */
+export function moyenneProgression(
+  releve: Releve,
+  publishedAt: Record<number, string>
+): ProgressionPoint[] {
+  const days = [...new Set(Object.values(publishedAt).map((iso) => iso.slice(0, 10)))].sort();
+  if (days.length < 2) return []; // une seule vague : rien à tracer
+
+  return days.map((day) => {
+    const known = (id: number) => {
+      const published = publishedAt[id];
+      return published === undefined || published.slice(0, 10) <= day;
+    };
+    const partiel = releveAtDate(releve, known);
+    const ueMoyennes: Record<string, number | null> = {};
+    for (const [code, ue] of Object.entries(partiel.ues)) {
+      ueMoyennes[code] = ueMoyenne(ue, partiel, {}, code);
+    }
+    return { date: day, moyenne: moyenneGenerale(partiel.ues, ueMoyennes) };
+  });
 }
 
 /** Un module est "simulé" si au moins une de ses évaluations (ou sa saisie manuelle) est surchargée. */
@@ -353,8 +462,8 @@ export function evaluationWeightInModule(mod: ModuleEntry, evalIdx: number): num
  * de moyenne officielle pour le semestre courant) ; fallback sur ue.moyenne pour les
  * semestres archivés où le détail des modules n'est plus renvoyé.
  */
-export function ueMoyenneCompat(ue: Ue, releve: Releve): number | null {
-  const agg = ueAggregate(ue, releve, {}).value;
+export function ueMoyenneCompat(ue: Ue, releve: Releve, ueCode?: string): number | null {
+  const agg = ueAggregate(ue, releve, {}, ueCode).value;
   if (agg !== null) return agg;
   const m = ue.moyenne;
   if (m === null || m === undefined) return null;
@@ -367,7 +476,7 @@ export function semesterMoyenne(releve: Releve): number | null {
   const moys: Record<string, number | null> = {};
   for (const [code, ue] of Object.entries(releve.ues)) {
     if (ue.type === 1) continue;
-    moys[code] = ueMoyenneCompat(ue, releve);
+    moys[code] = ueMoyenneCompat(ue, releve, code);
   }
   return moyenneGenerale(releve.ues, moys);
 }

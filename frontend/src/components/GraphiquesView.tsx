@@ -15,17 +15,20 @@ import {
 import type { ModuleEntry, Releve, Semestre } from "../types";
 import { numericNoteValue, round2, ueMoyenneCompat, ueAggregate } from "../simulator";
 import type { SemestrePoint } from "./EvolutionChart";
+import type { ProgressionPoint } from "../simulator";
 import { useChartTheme } from "../chartTheme";
 import { Card } from "./ui";
 
 const RadarUE = lazy(() => import("./RadarUE"));
 const EvolutionChart = lazy(() => import("./EvolutionChart"));
+const ProgressionChart = lazy(() => import("./ProgressionChart"));
 
 interface Props {
   releve: Releve;
   overrides: Record<string, number>;
   ueMoyennes: Record<string, number | null>;
   evolution: SemestrePoint[];
+  progression: ProgressionPoint[];
   allReleves: Record<string, Releve>;
   semestres: Semestre[];
   currentSemestreId: string | null;
@@ -65,6 +68,7 @@ export default function GraphiquesView({
   overrides,
   ueMoyennes,
   evolution,
+  progression,
   allReleves,
   semestres,
   currentSemestreId,
@@ -83,7 +87,7 @@ export default function GraphiquesView({
   const comparisonData = useMemo(
     () =>
       ueEntries.map(([code, ue]) => {
-        const aggregate = ueAggregate(ue, releve, overrides);
+        const aggregate = ueAggregate(ue, releve, overrides, code);
         return { ue: code, moi: round2(aggregate.value), promo: round2(aggregate.moy) };
       }),
     [ueEntries, releve, overrides]
@@ -179,7 +183,9 @@ export default function GraphiquesView({
   const semesterCompareData = ueEntries.map(([code], index) => {
     const current = ueMoyennes[code];
     const [, comparedUe] = compareUeEntries[index] ?? [];
-    const compared = comparedUe && compareReleve ? ueMoyenneCompat(comparedUe, compareReleve) : null;
+    const compareUeCode = compareUeEntries[index]?.[0];
+    const compared =
+      comparedUe && compareReleve ? ueMoyenneCompat(comparedUe, compareReleve, compareUeCode) : null;
     return {
       ue: `UE${index + 1}`,
       actuel: current !== null && current !== undefined ? round2(current) : null,
@@ -197,6 +203,9 @@ export default function GraphiquesView({
         </Suspense>
         <Suspense fallback={<ChartFallback />}>
           <EvolutionChart points={evolution} />
+        </Suspense>
+        <Suspense fallback={<ChartFallback />}>
+          <ProgressionChart points={progression} />
         </Suspense>
       </div>
 
