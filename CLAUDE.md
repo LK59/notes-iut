@@ -88,6 +88,11 @@ et le package `cache/`.
   requête mutante `/api/`, ce qui remplace un token dédié) ; en-têtes de sécurité dont une CSP
   stricte — `font-src 'self'` impose les polices auto-hébergées, `script-src 'self'` interdit tout
   script inline (d'où `public/theme-init.js`), `style-src` garde `'unsafe-inline'` pour recharts.
+- **Logs.** `_log_event()` (`logging_utils.py`) écrit du JSON sur le logger `notes_iut.api`, câblé
+  par `configure_logging()` appelé à l'import de `main.py`. Ne pas supprimer cet appel : uvicorn ne
+  configure que ses propres loggers, la racine reste sans handler, et le logger retombe alors au
+  niveau WARNING du handler de dernier recours — tous les événements INFO disparaissent
+  silencieusement de `docker logs`. Niveau réglable par `LOG_LEVEL`.
 - **Polling push** (`push_polling.py`) : tâche asyncio lancée dans `lifespan`, se reconnecte avec
   les identifiants « se souvenir de moi », compare un snapshot de notes et notifie via VAPID. Voir
   la mémoire `project_push_notifications.md` pour le piège du format de clé privée. Deux règles
@@ -100,6 +105,12 @@ et le package `cache/`.
   c'est celui-là qu'on veut voir — les deux règles sont volontairement différentes. Le snapshot
   n'avance pas tant qu'une notification attendue n'a pas pu partir, sinon la note est marquée
   « déjà vue » et perdue.
+- **Remember-tokens : deux échéances.** 30 jours absolus **et** 7 jours d'inactivité, comptés
+  depuis `last_used_at`. Toute vue de ces jetons doit exposer `min(absolue, inactivité)` — n'afficher
+  que l'absolue présentait comme actif un appareil déjà mort. Chaque `/api/refresh` fait tourner le
+  jeton (`rotate_remember_token`), qui **reporte `created_at`** : recréer le jeton à neuf repoussait
+  l'échéance absolue à chaque usage, et un appareil utilisé régulièrement ne redemandait jamais le
+  mot de passe — alors que le CAS couvre aussi mail, VPN et ENT.
 - **Refus du CAS.** Seul un message reconnu comme « identifiants incorrects » lève
   `InvalidCredentials` ; tout autre refus (compte verrouillé, mot de passe expiré, MFA) lève
   `CasAuthenticationRefused`. La distinction compte : le polling révoque **tous** les
@@ -134,6 +145,12 @@ et le package `cache/`.
   d'un compte fuient vers le suivant sur un appareil partagé. La déconnexion (`logout()` dans
   `api.ts`) purge **quatre** couches, pas trois : à ces deux caches s'ajoutent la session serveur et
   l'abonnement push — laissé en place, il envoyait les notes du compte sortant au suivant.
+- **Tests vitest.** Quatre fichiers : `simulator.test.ts`, `offlineCache.test.ts`, `api.test.ts`,
+  `deviceLabel.test.ts`. Pas de jsdom — `localStorage`, `navigator` et `fetch` sont stubbés à la
+  main dans chaque fichier, ce qui suffit à cette logique et évite ~10 Mo dans la CI. Les deux
+  fichiers de purge/auth existent parce que ces chemins-là ont déjà cassé (fuite de données entre
+  comptes, impasse au rechargement) : y ajouter un test plutôt que de vérifier à la main. Un test
+  qui filtre avec la constante qu'il vérifie ne prouve rien — utiliser des valeurs en dur.
 - **Ids de semestre.** ScoDoc renvoie `formsemestre_id` en nombre, tout le client le manipule en
   chaîne (valeur de `<select>`, segment d'URL, clé de cache et de requête). La normalisation — et le
   tri chronologique de la liste — se fait une seule fois, dans `normalizeSemestres` (`api.ts`) : ne
@@ -151,7 +168,7 @@ et le package `cache/`.
   `SectionNav` applique le défilement au rail lui-même. Éviter aussi tout `w-full` qui déborde
   (le débordement horizontal transforme le défilement vertical en glissement diagonal sur mobile).
 - **Simulation** (`simulator.ts`) : les min/max ne sont calculés qu'au niveau d'une évaluation
-  individuelle — les agréger produirait des extrêmes fictifs. Seul fichier couvert par vitest.
+  individuelle — les agréger produirait des extrêmes fictifs.
   La moyenne d'une UE pondère chaque évaluation par `coef × poids[codeUE]` (formule ScoDoc) :
   en BUT, une même ressource alimente plusieurs UE avec des poids différents, voire nuls. D'où
   le paramètre `ueCode` de `ueAggregate`/`moduleAggregate` — l'omettre retombe sur `coef` seul,

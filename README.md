@@ -86,7 +86,8 @@ frontend/
     api.ts             # Couche d'accès à l'API backend
     schemas.ts         # Validation manuelle des réponses ScoDoc
     offlineCache.ts    # Cache localStorage best effort
-    simulator.ts       # Simulation locale des notes (couvert par vitest)
+    simulator.ts       # Simulation locale des notes
+    deviceLabel.ts     # Libellé lisible d'un appareil depuis son user-agent
     sw.ts              # Service worker (injectManifest)
     components/        # Composants UI, primitives dans ui.tsx
     hooks/             # useReleveData, useSimulation, …
