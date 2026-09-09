@@ -326,7 +326,7 @@ def api_clear_my_cache(request: Request):
 def api_my_sessions(request: Request):
     session = _require_session(request)
     return {
-        "sessions": cache.list_remember_sessions(session.username),
+        "sessions": cache.list_remember_sessions(session.username, request.cookies.get(COOKIE_REMEMBER)),
         "limits": cache.remember_token_stats(session.username),
     }
 

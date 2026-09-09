@@ -194,28 +194,45 @@ def delete_remember_token(token: str, user_agent: str | None = None, ip_address:
         raise
 
 
-def list_remember_sessions(username: str) -> list[dict]:
+def _session_view(row: tuple, now: float, current_token_hash: str | None = None) -> dict:
+    """Deux durées de vie coexistent : 30 j absolus et 7 j d'inactivité. N'exposer que
+    `expires_at` faisait afficher un appareil inactif depuis un mois comme encore valide
+    pendant 23 jours, alors que get_remember_credentials le supprime au premier usage."""
+    session_id, username, created_at, last_used_at, expires_at, user_agent, token_hash = row
+    last_seen = last_used_at or created_at or now
+    idle_deadline = last_seen + REMEMBER_IDLE_TTL
+    effective = min(expires_at, idle_deadline)
+    return {
+        "session_id": session_id,
+        "username": username,
+        "created_at": created_at,
+        "last_used_at": last_used_at,
+        "expires_at": expires_at,
+        "idle_deadline": idle_deadline,
+        "effective_expires_at": effective,
+        "expired": now > effective,
+        "is_current": bool(current_token_hash) and token_hash == current_token_hash,
+        "user_agent": user_agent,
+    }
+
+
+_SESSION_COLUMNS = "session_id, username, created_at, last_used_at, expires_at, user_agent, token_hash"
+
+
+def list_remember_sessions(username: str, current_token: str | None = None) -> list[dict]:
     conn = _connect()
     rows = conn.execute(
-        """
-        SELECT session_id, username, created_at, last_used_at, expires_at, user_agent
+        f"""
+        SELECT {_SESSION_COLUMNS}
         FROM remember_tokens
         WHERE username = ?
         ORDER BY COALESCE(last_used_at, created_at, 0) DESC
         """,
         (username,),
     ).fetchall()
-    return [
-        {
-            "session_id": row[0],
-            "username": row[1],
-            "created_at": row[2],
-            "last_used_at": row[3],
-            "expires_at": row[4],
-            "user_agent": row[5],
-        }
-        for row in rows
-    ]
+    now = time.time()
+    current_hash = _hash_token(current_token) if current_token else None
+    return [_session_view(row, now, current_hash) for row in rows]
 
 
 def delete_remember_session(username: str, session_id: str, user_agent: str | None = None, ip_address: str | None = None) -> bool:
@@ -254,25 +271,16 @@ def delete_all_remember_sessions(username: str, user_agent: str | None = None, i
 def list_all_remember_sessions(limit: int = 200) -> list[dict]:
     conn = _connect()
     rows = conn.execute(
-        """
-        SELECT session_id, username, created_at, last_used_at, expires_at, user_agent
+        f"""
+        SELECT {_SESSION_COLUMNS}
         FROM remember_tokens
         ORDER BY COALESCE(last_used_at, created_at, 0) DESC
         LIMIT ?
         """,
         (limit,),
     ).fetchall()
-    return [
-        {
-            "session_id": row[0],
-            "username": row[1],
-            "created_at": row[2],
-            "last_used_at": row[3],
-            "expires_at": row[4],
-            "user_agent": row[5],
-        }
-        for row in rows
-    ]
+    now = time.time()
+    return [_session_view(row, now) for row in rows]
 
 
 def list_remember_events(limit: int = 200) -> list[dict]:
@@ -303,7 +311,15 @@ def list_remember_events(limit: int = 200) -> list[dict]:
 def purge_expired_remember_tokens() -> None:
     conn = _connect()
     try:
-        conn.execute("DELETE FROM remember_tokens WHERE expires_at < ?", (time.time(),))
+        now = time.time()
+        conn.execute(
+            """
+            DELETE FROM remember_tokens
+            WHERE expires_at < ?
+               OR COALESCE(last_used_at, created_at, 0) < ?
+            """,
+            (now, now - REMEMBER_IDLE_TTL),
+        )
         conn.commit()
     except Exception:
         conn.rollback()

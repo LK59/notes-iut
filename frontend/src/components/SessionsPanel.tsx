@@ -99,11 +99,27 @@ export default function SessionsPanel({ onClose }: { onClose: () => void }) {
             {sessions.map((session) => (
               <div key={session.session_id} className="flex items-start justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-fg">{describeDevice(session.user_agent)}</p>
+                  <p className="text-sm font-medium text-fg">
+                    {describeDevice(session.user_agent)}
+                    {session.is_current && (
+                      <span className="ml-2 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-normal text-accent">
+                        cet appareil
+                      </span>
+                    )}
+                  </p>
                   <p className="mono text-xs text-subtle">
                     Dernier accès {fmtTime(session.last_used_at)}
                   </p>
-                  <p className="mono text-xs text-subtle">Expire le {fmtTime(session.expires_at)}</p>
+                  {session.expired ? (
+                    <p className="mono text-xs text-neg">
+                      Expiré depuis le {fmtTime(session.effective_expires_at)} — reconnexion requise
+                    </p>
+                  ) : (
+                    <p className="mono text-xs text-subtle">
+                      Expire le {fmtTime(session.effective_expires_at)}
+                      {session.effective_expires_at < session.expires_at && " sans nouvel accès"}
+                    </p>
+                  )}
                 </div>
                 <Button
                   tone="quiet"

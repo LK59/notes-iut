@@ -357,7 +357,12 @@ export interface RememberSession {
   username: string;
   created_at: number;
   last_used_at: number;
+  /** Échéance absolue seule : ne pas l'afficher telle quelle, voir effective_expires_at. */
   expires_at: number;
+  idle_deadline: number;
+  effective_expires_at: number;
+  expired: boolean;
+  is_current: boolean;
   user_agent?: string;
 }
 
