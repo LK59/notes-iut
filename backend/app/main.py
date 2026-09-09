@@ -142,6 +142,31 @@ class _BrotliResponder:
             await self._send({"type": "http.response.body", "body": body, "more_body": False})
 
 
+# ── Politique de cache des fichiers servis par le fallback SPA ────────────────
+# Définie au niveau module, et non dans le bloc `if FRONTEND_DIST.is_dir()` : la CI ne
+# construit pas le frontend, et les tests doivent pouvoir l'importer sans `dist`.
+
+# Coquille de la SPA : jamais mise en cache, c'est elle qui référence les assets hashés.
+_NO_STORE = "no-cache, no-store, must-revalidate"
+# Le service worker pilote ses propres mises à jour : il doit être revalidé à chaque fois
+# (une réponse 304 suffit), sinon un déploiement peut rester invisible pendant toute la
+# durée de vie du cache.
+_REVALIDATE = "no-cache"
+# Fichiers stables mais au nom non haché (icônes, manifeste, theme-init.js) : une heure
+# suffit à ne plus les retélécharger à chaque navigation, tout en laissant un déploiement
+# se propager vite.
+_SHORT_CACHE = "public, max-age=3600"
+_ALWAYS_REVALIDATE = {"sw.js", "sw.js.map", "registerSW.js"}
+
+
+def _cache_control(nom: str) -> str:
+    if nom in _ALWAYS_REVALIDATE:
+        return _REVALIDATE
+    if nom == "index.html":
+        return _NO_STORE
+    return _SHORT_CACHE
+
+
 class _ImmutableStaticFiles(StaticFiles):
     """Ajoute Cache-Control: immutable sur les assets hashés par Vite."""
 
@@ -275,8 +300,11 @@ if FRONTEND_DIST.is_dir():
         # SyntaxError incompréhensible au lieu d'une erreur 404 exploitable.
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Ressource introuvable.")
-        headers = {"Cache-Control": "no-cache, no-store, must-revalidate"}
         candidate = (FRONTEND_DIST / full_path).resolve()
         if full_path and candidate.is_relative_to(DIST_ROOT) and candidate.is_file():
-            return FileResponse(candidate, headers=headers)
-        return FileResponse(DIST_ROOT / "index.html", headers=headers)
+            # Tout ce qui n'est pas la coquille était servi en "no-store" : theme-init.js,
+            # bloquant dans le <head>, et les icônes (dont celle des notifications push)
+            # étaient donc retéléchargés à chaque fois. Même correction que pour les
+            # polices, restée en chemin à l'époque.
+            return FileResponse(candidate, headers={"Cache-Control": _cache_control(candidate.name)})
+        return FileResponse(DIST_ROOT / "index.html", headers={"Cache-Control": _NO_STORE})

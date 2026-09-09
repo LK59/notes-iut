@@ -63,3 +63,17 @@ def test_configure_logging_is_idempotent():
     before = len(logger.handlers)
     configure_logging()
     assert len(logger.handlers) == before
+
+
+def test_spa_static_files_are_cacheable_but_shell_and_sw_are_not(tmp_path, monkeypatch):
+    """Régression : le fallback SPA servait TOUT en no-store, y compris theme-init.js
+    (bloquant dans le <head>) et les icônes — dont celle des notifications push, donc
+    retéléchargée à chaque notification. index.html doit rester non mis en cache, et le
+    service worker revalidé pour qu'un déploiement ne reste pas invisible."""
+    from app.main import _cache_control
+
+    assert _cache_control("index.html") == "no-cache, no-store, must-revalidate"
+    assert _cache_control("sw.js") == "no-cache"
+    assert _cache_control("registerSW.js") == "no-cache"
+    for nom in ("theme-init.js", "manifest.json", "icon-192.png", "favicon.ico"):
+        assert _cache_control(nom) == "public, max-age=3600", nom
