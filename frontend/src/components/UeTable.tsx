@@ -20,6 +20,13 @@ import { Card, Chevron, Collapsible, Grade, NoteInput } from "./ui";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
+/** Gouttière des moyennes : même largeur et même alignement aux trois niveaux
+ * (UE, module, évaluation), pour que la hiérarchie se lise sur un seul axe vertical.
+ * Avant, la moyenne d'un module était posée en bout d'une ligne de pastilles qui
+ * passait à la ligne selon la longueur du titre : la colonne ne tombait jamais deux
+ * fois au même endroit. */
+const GRADE_COL = "shrink-0 w-16 text-right";
+
 interface Props {
   ueCode: string;
   ue: Ue;
@@ -96,7 +103,7 @@ function UeTable({
       <button
         onClick={() => setOpen((value) => !value)}
         aria-expanded={isOpen}
-        className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-left rounded-xl hover:bg-inset transition-colors"
+        className="w-full flex items-start justify-between gap-3 px-4 py-4 text-left rounded-xl hover:bg-inset transition-colors"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -104,24 +111,22 @@ function UeTable({
             {simulated && <Chip color="sim">simulé</Chip>}
             {decision && <Chip color="accent" title="Décision de fin de semestre">{decision.code}</Chip>}
           </div>
-          {ue.titre && <p className="text-xs text-muted mt-0.5">{ue.titre}</p>}
-          <div className="flex items-center gap-1.5 flex-wrap mt-2">
-            {ue.ECTS && (
-              <Chip title="ECTS acquis sur total">
-                {ue.ECTS.acquis ?? "-"}/{ue.ECTS.total ?? "-"} ECTS
+          {ue.titre && <p className="text-xs text-muted mt-1">{ue.titre}</p>}
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            {/* Deux pastilles par niveau, toujours dans le même ordre : ce que pèse la
+                ligne, puis où elle se situe dans la promo. Quatre pastilles séparées
+                débordaient systématiquement sur une seconde ligne, la dernière restant
+                seule — le rythme se cassait à chaque carte. */}
+            {(ue.ECTS || ueWeightGlobal !== null) && (
+              <Chip title="ECTS acquis sur total, et poids de cette UE dans la moyenne générale">
+                {ue.ECTS && `${ue.ECTS.acquis ?? "-"}/${ue.ECTS.total ?? "-"} ECTS`}
+                {ue.ECTS && ueWeightGlobal !== null && " · "}
+                {ueWeightGlobal !== null && `${ueWeightGlobal.toFixed(0)}% gén.`}
               </Chip>
             )}
-            <Chip title="Moyenne de la classe sur cette UE">classe {fmt(aggregate.moy)}</Chip>
-            {rang && (
-              <Chip title="Rang dans la promo pour cette UE">
-                rang {rang.rang}/{rang.total}
-              </Chip>
-            )}
-            {ueWeightGlobal !== null && (
-              <Chip title="Poids de cette UE dans la moyenne générale">
-                {ueWeightGlobal.toFixed(0)}% gén.
-              </Chip>
-            )}
+            <Chip title="Rang dans la promo et moyenne de la classe sur cette UE">
+              {rang ? `${rang.rang}/${rang.total} · ` : ""}classe {fmt(aggregate.moy)}
+            </Chip>
             {bonus !== 0 && <Chip color="pos" title="Bonus appliqué à l'UE">bonus +{bonus}</Chip>}
             {malus > 0 && <Chip color="neg" title="Malus appliqué à l'UE">malus −{malus}</Chip>}
           </div>
@@ -129,7 +134,9 @@ function UeTable({
         <div className="flex items-center gap-2 shrink-0">
           {/* Agrégat : neutre. L'état « simulé » est déjà porté par la puce et la
               bordure de la carte, et la moyenne de classe est affichée juste au-dessus. */}
-          <Grade value={fmt(aggregate.value)} size="lg" />
+          <span className={GRADE_COL}>
+            <Grade value={fmt(aggregate.value)} size="lg" />
+          </span>
           <Chevron open={isOpen} className="text-subtle print:hidden" />
         </div>
       </button>
@@ -140,10 +147,10 @@ function UeTable({
             ({ group, label, entries }) =>
               entries.length > 0 && (
                 <div key={group}>
-                  <h4 className="px-1 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-subtle">
+                  <h4 className="px-1 mb-2 text-[11px] font-semibold uppercase tracking-wider text-subtle">
                     {label}
                   </h4>
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     {entries.map(([moduleCode, mod]) => {
                       const summary = (group === "ressources" ? ue.ressources : ue.saes)?.[moduleCode];
                       const modAgg = moduleAggregate(mod, group, moduleCode, overrides, ueCode);
@@ -160,8 +167,8 @@ function UeTable({
                       return (
                         <div
                           key={moduleCode}
-                          className={`rounded-lg border bg-inset/60 ${
-                            modSimulated ? "border-sim/40" : "border-line"
+                          className={`rounded-lg bg-inset/60 ${
+                            modSimulated ? "border border-sim/40" : ""
                           }`}
                         >
                           <div
@@ -171,39 +178,40 @@ function UeTable({
                             onKeyDown={(event) =>
                               event.key === "Enter" && hasEvaluations && toggleModule(moduleKey)
                             }
-                            className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-2.5 py-2 ${
+                            className={`flex items-start justify-between gap-2 px-3 py-2 ${
                               hasEvaluations ? "cursor-pointer rounded-t-lg hover:bg-inset" : ""
                             }`}
                           >
-                            <span className="flex items-center gap-1.5 min-w-0 text-[13px] font-medium text-fg">
-                              {hasEvaluations && (
-                                <Chevron open={isModuleOpen} className="text-subtle print:hidden" />
-                              )}
-                              <span className="truncate">{mod.titre || moduleCode}</span>
-                              {modSimulated && <Chip color="sim">simulé</Chip>}
-                            </span>
-                            <span className="flex items-center gap-1.5 flex-wrap">
-                              <Chip title="Coefficient dans l'UE">
-                                coef {toNumber(summary?.coef, 1).toFixed(1)}
-                              </Chip>
-                              {modWeightUe !== null && (
-                                <Chip title="Poids dans l'UE, puis dans la moyenne générale">
-                                  {modWeightUe.toFixed(0)}% UE
-                                  {modWeightGlobal !== null && ` · ${modWeightGlobal.toFixed(1)}% gén.`}
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-2 min-w-0 text-[13px] font-medium text-fg">
+                                {hasEvaluations && (
+                                  <Chevron open={isModuleOpen} className="text-subtle print:hidden" />
+                                )}
+                                <span className="truncate">{mod.titre || moduleCode}</span>
+                                {modSimulated && <Chip color="sim">simulé</Chip>}
+                              </span>
+                              <span className="mt-1 flex items-center gap-2 flex-wrap">
+                                {/* Le poids dans la moyenne générale se déduit de celui de l'UE,
+                                    affiché juste au-dessus : le répéter ici doublait la pastille. */}
+                                <Chip title="Coefficient, et poids de ce module dans l'UE">
+                                  coef {toNumber(summary?.coef, 1).toFixed(1)}
+                                  {modWeightUe !== null && ` · ${modWeightUe.toFixed(0)}% UE`}
                                 </Chip>
-                              )}
-                              {hasEvaluations && (
-                                <span className="mono text-[11px] text-subtle">
-                                  classe {fmt(modAgg.moy)}
-                                </span>
-                              )}
-                              <Grade value={fmt(modAgg.value)} size="sm" />
+                                {hasEvaluations && (
+                                  <Chip title="Moyenne de la classe sur ce module">
+                                    classe {fmt(modAgg.moy)}
+                                  </Chip>
+                                )}
+                              </span>
+                            </span>
+                            <span className={GRADE_COL}>
+                              <Grade value={fmt(modAgg.value)} size="md" />
                             </span>
                           </div>
 
                           {hasEvaluations ? (
                             <Collapsible open={isModuleOpen}>
-                              <div className="px-1.5 pb-1.5 space-y-0.5">
+                              <div className="px-2 pb-2 space-y-1">
                                 {mod.evaluations!.map((evaluation, index) => {
                                   const key = `${group}-${moduleCode}-${index}`;
                                   const overridden = key in overrides;
@@ -226,33 +234,32 @@ function UeTable({
                                         onKeyDown={(event) =>
                                           event.key === "Enter" && onSelect(isSelected ? null : key)
                                         }
-                                        className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 rounded-lg px-2 py-1.5 cursor-pointer transition-colors ${
+                                        className={`flex items-start justify-between gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors ${
                                           isSelected ? "bg-accent-soft" : "bg-surface hover:bg-inset"
                                         }`}
                                       >
-                                        <span className="flex items-center gap-1.5 min-w-0">
-                                          <Chevron open={isSelected} className="text-subtle print:hidden" />
-                                          <span className="text-[13px] text-fg truncate">
-                                            {evaluation.description || "Évaluation"}
+                                        <span className="min-w-0 flex-1">
+                                          <span className="flex items-center gap-2 min-w-0">
+                                            <Chevron open={isSelected} className="text-subtle print:hidden" />
+                                            <span className="text-[13px] text-fg truncate">
+                                              {evaluation.description || "Évaluation"}
+                                            </span>
+                                            {newIds?.has(evaluation.id) && <Chip color="pos">nouveau</Chip>}
                                           </span>
-                                          {newIds?.has(evaluation.id) && <Chip color="pos">nouveau</Chip>}
-                                        </span>
-                                        <span className="flex items-center gap-1.5 flex-wrap">
-                                          <Chip title="Min · moyenne de classe · max sur la promo">
-                                            {fmt(numericNoteValue(evaluation.note.min))} ·{" "}
-                                            {fmt(classMoy)} ·{" "}
-                                            {fmt(numericNoteValue(evaluation.note.max))}
-                                          </Chip>
-                                          <Chip title="Coefficient de cette évaluation">
-                                            coef {toNumber(evaluation.coef, 1).toFixed(1)}
-                                          </Chip>
-                                          {evalWeightModule !== null && (
-                                            <Chip title="Poids dans le module, puis dans la moyenne générale">
-                                              {evalWeightModule.toFixed(0)}% mod.
-                                              {evalWeightGlobal !== null &&
-                                                ` · ${evalWeightGlobal.toFixed(1)}% gén.`}
+                                          <span className="mt-1 flex items-center gap-2 flex-wrap">
+                                            <Chip title="Coefficient, et poids de cette évaluation dans le module">
+                                              coef {toNumber(evaluation.coef, 1).toFixed(1)}
+                                              {evalWeightModule !== null &&
+                                                ` · ${evalWeightModule.toFixed(0)}% mod.`}
                                             </Chip>
-                                          )}
+                                            <Chip title="Min · moyenne de classe · max sur la promo">
+                                              {fmt(numericNoteValue(evaluation.note.min))} ·{" "}
+                                              {fmt(classMoy)} ·{" "}
+                                              {fmt(numericNoteValue(evaluation.note.max))}
+                                            </Chip>
+                                          </span>
+                                        </span>
+                                        <span className={`${GRADE_COL} flex justify-end`}>
                                           <span className="hidden print:inline mono text-sm">
                                             {value ?? "—"}
                                           </span>
@@ -286,7 +293,7 @@ function UeTable({
                               </div>
                             </Collapsible>
                           ) : (
-                            <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5 pt-0.5">
+                            <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-1">
                               <span className="text-xs text-subtle italic">Aucune évaluation publiée</span>
                               <span className="hidden print:inline mono text-sm">
                                 {overrides[manualKey(group, moduleCode)] ?? "—"}

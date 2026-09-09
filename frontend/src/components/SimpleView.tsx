@@ -16,6 +16,10 @@ import { Card, Chevron, Collapsible, comparedToClass, Grade } from "./ui";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
+/** Même gouttière de moyennes que dans UeTable : la valeur tombe au même endroit
+ * quel que soit le niveau, au lieu de suivre la fin d'une ligne de longueur variable. */
+const GRADE_COL = "shrink-0 w-16 text-right";
+
 interface Props {
   releve: Releve;
   /** Notes simulées en vue Détaillé. Elles doivent être répercutées ici : sans ça, une
@@ -84,7 +88,7 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
             <button
               onClick={() => toggle(setOpenUes, code)}
               aria-expanded={ueOpen}
-              className="w-full flex items-start justify-between gap-3 px-4 py-3.5 text-left rounded-xl hover:bg-inset transition-colors"
+              className="w-full flex items-start justify-between gap-3 px-4 py-4 text-left rounded-xl hover:bg-inset transition-colors"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -92,30 +96,27 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                   {simulated && <Chip color="sim">simulé</Chip>}
                   {hasNew && <Chip color="pos">nouveau</Chip>}
                 </div>
-                {ue.titre && <p className="text-xs text-muted mt-0.5">{ue.titre}</p>}
-                <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                  {ue.ECTS && (
-                    <Chip title="ECTS acquis sur total">
-                      {ue.ECTS.acquis ?? "-"}/{ue.ECTS.total ?? "-"} ECTS
+                {ue.titre && <p className="text-xs text-muted mt-1">{ue.titre}</p>}
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  {/* Même règle que dans UeTable : une pastille de poids, une de position. */}
+                  {(ue.ECTS || weight !== null) && (
+                    <Chip title="ECTS acquis sur total, et poids de cette UE dans la moyenne générale">
+                      {ue.ECTS && `${ue.ECTS.acquis ?? "-"}/${ue.ECTS.total ?? "-"} ECTS`}
+                      {ue.ECTS && weight !== null && " · "}
+                      {weight !== null && `${weight.toFixed(0)}% gén.`}
                     </Chip>
                   )}
-                  <Chip title="Moyenne de la classe">classe {fmt(aggregate.moy)}</Chip>
-                  {rang && (
-                    <Chip title="Rang dans la promo pour cette UE">
-                      rang {rang.rang}/{rang.total}
-                    </Chip>
-                  )}
-                  {weight !== null && (
-                    <Chip title="Poids de cette UE dans la moyenne générale">
-                      {weight.toFixed(0)}% gén.
-                    </Chip>
-                  )}
+                  <Chip title="Rang dans la promo et moyenne de la classe">
+                    {rang ? `${rang.rang}/${rang.total} · ` : ""}classe {fmt(aggregate.moy)}
+                  </Chip>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {/* Neutre : la puce « simulé » et la moyenne de classe disent déjà
                     ce qu'il faut, colorer aussi le nombre noyait le signal. */}
-                <Grade value={fmt(aggregate.value)} size="lg" />
+                <span className={GRADE_COL}>
+                  <Grade value={fmt(aggregate.value)} size="lg" />
+                </span>
                 <Chevron open={ueOpen} className="text-subtle" />
               </div>
             </button>
@@ -135,27 +136,29 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                         onKeyDown={(event) =>
                           event.key === "Enter" && hasEvaluations && toggle(setOpenModules, moduleKey)
                         }
-                        className={`flex items-center justify-between gap-3 px-4 py-2.5 ${
+                        className={`flex items-center justify-between gap-3 px-4 py-3 ${
                           hasEvaluations ? "cursor-pointer hover:bg-inset" : ""
                         }`}
                       >
-                        <span className="flex items-center gap-1.5 min-w-0 text-sm text-fg">
+                        <span className="flex items-center gap-2 min-w-0 text-sm text-fg">
                           {hasEvaluations && <Chevron open={moduleOpen} className="text-subtle" />}
                           <span className="truncate">{mod.titre || moduleCode}</span>
                           {modSimulated && <Chip color="sim">simulé</Chip>}
                         </span>
-                        <span className="flex items-center gap-2.5 shrink-0">
+                        <span className="flex items-center gap-3 shrink-0">
                           {coef !== undefined && (
                             <span className="mono text-[11px] text-subtle">
                               ×{toNumber(coef, 1).toFixed(1)}
                             </span>
                           )}
-                          <Grade value={fmt(modAgg.value)} size="sm" />
+                          <span className={GRADE_COL}>
+                            <Grade value={fmt(modAgg.value)} size="md" />
+                          </span>
                         </span>
                       </div>
 
                       <Collapsible open={Boolean(moduleOpen)}>
-                        <div className="px-2 pb-2 space-y-0.5">
+                        <div className="px-2 pb-2 space-y-1">
                           {mod.evaluations?.map((evaluation, index) => {
                             const key = `${group}-${moduleCode}-${index}`;
                             const isSelected = selectedKey === key;
@@ -179,16 +182,18 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                                     </span>
                                     {newIds?.has(evaluation.id) && <Chip color="pos">nouveau</Chip>}
                                   </span>
-                                  <span className="flex items-center gap-2.5 shrink-0">
+                                  <span className="flex items-center gap-3 shrink-0">
                                     <span className="mono text-[11px] text-subtle">
                                       classe {fmt(classMoy)}
                                     </span>
-                                    <Grade
-                                      value={value === null || value === undefined ? "—" : value.toFixed(2)}
-                                      size="sm"
-                                      simulated={overridden}
-                                      state={comparedToClass(value ?? null, classMoy)}
-                                    />
+                                    <span className={GRADE_COL}>
+                                      <Grade
+                                        value={value === null || value === undefined ? "—" : value.toFixed(2)}
+                                        size="sm"
+                                        simulated={overridden}
+                                        state={comparedToClass(value ?? null, classMoy)}
+                                      />
+                                    </span>
                                   </span>
                                 </div>
                                 {isSelected && (

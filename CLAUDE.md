@@ -126,6 +126,19 @@ et le package `cache/`.
 - **Primitives partagées** dans `src/components/ui.tsx` : `Card`, `Panel`, `Collapsible`, `Notice`,
   `Button`, `NoteInput`, `Grade`, `Chevron`. Le repli utilise `grid-template-rows: 0fr → 1fr` — pas
   de `max-height` magique, qui tronquait le contenu long.
+- **Hiérarchie des moyennes.** UE, module et évaluation affichent leur moyenne dans la même
+  gouttière (`GRADE_COL`, largeur fixe alignée à droite), en taille décroissante. Avant, la
+  moyenne d'un module était posée en bout d'une ligne de pastilles qui passait à la ligne selon
+  la longueur du titre : la colonne ne tombait jamais deux fois au même endroit.
+- **Deux pastilles par niveau**, toujours dans le même ordre : ce que pèse la ligne (ECTS/coef +
+  poids), puis où elle se situe dans la promo (rang + moyenne de classe). Ne pas en rajouter une
+  troisième — quatre pastilles débordaient sur une seconde ligne en laissant la dernière seule, et
+  le rythme se cassait à chaque carte. Ne pas répéter non plus un poids déductible du niveau
+  au-dessus (le `% gén.` d'un module se déduit de celui de son UE).
+- **Banc d'essai** : `frontend/dev/` + `/harness.html` rendent les vues authentifiées avec un
+  relevé inventé, via `vite dev` (voir `dev/README.md`). C'est le seul moyen de regarder ces écrans
+  sans identifiants CAS. Absent du bundle de production — le vérifier après tout changement du
+  build : `grep -rl "releveFictif" frontend/dist` doit ne rien renvoyer.
 - **Couleur de simulation.** L'ocre (`sim`) ne s'applique qu'aux notes d'évaluation individuelles
   saisies par l'utilisateur. Les agrégats (moyennes d'UE, de module, générale) ne la portent
   jamais : leur état simulé passe par la bordure de carte et une pastille.

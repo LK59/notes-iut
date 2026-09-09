@@ -3,6 +3,16 @@ import { countEvaluations, numericNoteValue } from "../simulator";
 import { Card } from "./ui";
 
 // Reprend les libellés du portail (correspondanceCodes) pour la décision de fin d'année.
+/** Nombre de colonnes = nombre de tuiles, pour qu'aucune ne se retrouve orpheline
+ * sur sa propre ligne. Classes écrites en toutes lettres : Tailwind ne compile que
+ * ce qu'il voit littéralement dans le source. */
+const GRID_COLS: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2",
+  3: "grid-cols-3",
+  4: "grid-cols-2 sm:grid-cols-4",
+};
+
 const DECISION_ANNEE_LABELS: Record<string, string> = {
   ADM: "Admis",
   ADJ: "Admis par décision de jury",
@@ -47,6 +57,30 @@ export default function SemestreSummary({
   const etudiant = releve.etudiant;
   const nom = etudiant ? `${etudiant.prenom ?? ""} ${etudiant.nom ?? ""}`.trim() : "";
 
+  // La moyenne de promo est déjà matérialisée par le repère de l'échelle ci-dessous :
+  // la répéter en tuile disait deux fois la même chose. On ne la garde que lorsque
+  // l'échelle n'est pas affichable (semestre à venir, bornes absentes).
+  const scaleShown =
+    started && moyenne !== null && notes?.min !== undefined && notes?.max !== undefined;
+
+  const stats = [
+    !scaleShown && (
+      <Stat key="moy" label="Moy. promo" value={started ? fmtNote(numericNoteValue(notes?.moy)) : "—"} />
+    ),
+    <Stat key="ects" label="ECTS" value={ects ? `${ects.acquis ?? "-"} / ${ects.total ?? "-"}` : "—"} />,
+    <Stat
+      key="abs"
+      label="Absences"
+      value={absences ? `${absences.injustifie} / ${absences.total}` : "—"}
+      hint={absences ? "non justifiées sur total (demi-journées)" : undefined}
+    />,
+    // La décision de jury n'existe que quelques jours par an : une tuile figée sur
+    // « — » onze mois sur douze n'apprend rien, autant rendre la place.
+    releve.semestre.situation && (
+      <Stat key="decision" label="Décision" value={releve.semestre.situation} small />
+    ),
+  ].filter(Boolean);
+
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-4 pt-4 pb-3">
@@ -80,7 +114,7 @@ export default function SemestreSummary({
       </div>
 
       {/* Repères de promo : une petite échelle vaut mieux que trois nombres alignés. */}
-      {started && moyenne !== null && notes?.min !== undefined && notes?.max !== undefined && (
+      {scaleShown && (
         <PromoScale
           min={numericNoteValue(notes.min)}
           moy={numericNoteValue(notes.moy)}
@@ -89,26 +123,8 @@ export default function SemestreSummary({
         />
       )}
 
-      <dl
-        className={`grid grid-cols-2 border-t border-line divide-x divide-line ${
-          releve.semestre.situation ? "sm:grid-cols-4" : "sm:grid-cols-3"
-        }`}
-      >
-        <Stat label="Moy. promo" value={started ? fmtNote(numericNoteValue(notes?.moy)) : "—"} />
-        <Stat
-          label="ECTS"
-          value={ects ? `${ects.acquis ?? "-"} / ${ects.total ?? "-"}` : "—"}
-        />
-        <Stat
-          label="Absences"
-          value={absences ? `${absences.injustifie} / ${absences.total}` : "—"}
-          hint={absences ? "non justifiées sur total (demi-journées)" : undefined}
-        />
-        {/* La décision de jury n'existe que quelques jours par an : une tuile figée sur
-            « — » onze mois sur douze n'apprend rien, autant rendre la place. */}
-        {releve.semestre.situation && (
-          <Stat label="Décision" value={releve.semestre.situation} small />
-        )}
+      <dl className={`grid border-t border-line divide-x divide-line ${GRID_COLS[stats.length]}`}>
+        {stats}
       </dl>
 
       {(decisionAnnee || decisionRcue.length > 0) && (
@@ -172,7 +188,9 @@ function PromoScale({
       </div>
       <div className="mt-1 flex justify-between mono text-[11px] text-subtle">
         <span>{min.toFixed(2)}</span>
-        <span className="text-muted">promo</span>
+        {/* La valeur, pas seulement la position du repère : la tuile « Moy. promo » a été
+            retirée (elle répétait cette échelle), le nombre doit donc rester lisible ici. */}
+        <span className="text-muted">{moy !== null ? `promo ${moy.toFixed(2)}` : "promo"}</span>
         <span>{max.toFixed(2)}</span>
       </div>
     </div>
