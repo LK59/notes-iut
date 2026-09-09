@@ -54,6 +54,7 @@ from .remember import (
     list_remember_sessions,
     mark_reauth_warning_sent,
     purge_expired_remember_tokens,
+    rotate_remember_token,
     purge_old_remember_events,
     remember_token_stats,
 )
@@ -116,6 +117,7 @@ __all__ = [
     "list_all_remember_sessions",
     "list_remember_events",
     "purge_expired_remember_tokens",
+    "rotate_remember_token",
     "purge_old_remember_events",
     "remember_token_stats",
     "get_credentials_for_background",

@@ -46,15 +46,27 @@ def _log_remember_event(
     )
 
 
-def create_remember_token(username: str, password: str, user_agent: str | None = None, ip_address: str | None = None) -> str:
-    """Chiffre le mot de passe, persiste le token haché, retourne le token brut."""
+def create_remember_token(
+    username: str,
+    password: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+    inherited_created_at: float | None = None,
+) -> str:
+    """Chiffre le mot de passe, persiste le token haché, retourne le token brut.
+
+    `inherited_created_at` sert à la rotation (voir rotate_remember_token) : sans lui, le
+    jeton reparti à neuf à chaque /api/refresh repoussait l'échéance absolue de 30 jours,
+    et un appareil utilisé régulièrement ne redemandait jamais le mot de passe. Comme le
+    CAS est le SSO qui couvre aussi mail, VPN et ENT, ce plafond doit être réel."""
     token = secrets_module.token_urlsafe(32)
     token_hash = _hash_token(token)
     session_id = secrets_module.token_urlsafe(16)
     now = time.time()
     key_id = _current_key_id(now)
     encrypted = _remember_fernet(key_id).encrypt(password.encode()).decode()
-    expires_at = now + REMEMBER_TOKEN_TTL
+    created_at = inherited_created_at if inherited_created_at is not None else now
+    expires_at = created_at + REMEMBER_TOKEN_TTL
     conn = _connect()
     try:
         conn.execute(
@@ -70,7 +82,7 @@ def create_remember_token(username: str, password: str, user_agent: str | None =
                 username,
                 encrypted,
                 expires_at,
-                now,
+                created_at,
                 now,
                 key_id,
                 user_agent,
@@ -96,6 +108,29 @@ def create_remember_token(username: str, password: str, user_agent: str | None =
         conn.rollback()
         raise
     return token
+
+
+def rotate_remember_token(
+    old_token: str,
+    username: str,
+    password: str,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> str:
+    """Remplace un jeton par un neuf en conservant sa date de première connexion.
+
+    Chaque /api/refresh renouvelle le jeton (pour qu'un jeton volé ne soit rejouable
+    qu'une fois). Recréer le jeton sans reporter created_at repoussait du même coup
+    l'échéance absolue : les « 30 jours » n'existaient qu'en théorie, un appareil utilisé
+    chaque semaine ne redemandait jamais le mot de passe."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT created_at FROM remember_tokens WHERE token_hash = ?",
+        (_hash_token(old_token),),
+    ).fetchone()
+    created_at = row[0] if row else None
+    delete_remember_token(old_token, user_agent, ip_address)
+    return create_remember_token(username, password, user_agent, ip_address, inherited_created_at=created_at)
 
 
 def get_remember_credentials(token: str, user_agent: str | None = None, ip_address: str | None = None) -> tuple[str, str] | None:

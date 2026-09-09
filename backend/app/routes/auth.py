@@ -190,8 +190,9 @@ def _run_refresh_job(job_id: str, username: str, password: str, old_token: str, 
         scodoc = cas_login(username, password, on_stage=_make_stage_updater(job_id))
         bootstrap = validate_premiere_connexion_payload(scodoc.bootstrap_data)
         cache.set_semestres(username, bootstrap)
-        cache.delete_remember_token(old_token, user_agent, client_ip)
-        new_token = cache.create_remember_token(username, password, user_agent, client_ip)
+        # Rotation, pas recréation : conserve la date de première connexion, donc l'échéance
+        # absolue de 30 jours (voir cache.rotate_remember_token).
+        new_token = cache.rotate_remember_token(old_token, username, password, user_agent, client_ip)
         sid = create_session(username, scodoc)
         _log_event("auth.refresh.ok", username_hash=_safe_hash(username))
         result = {"status": "ok", "sid": sid, "remember_token": new_token, "username": username}

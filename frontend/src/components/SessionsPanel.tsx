@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getMySessions, revokeAllMySessions, revokeMySession, type RememberSession } from "../api";
+import { describeDevice } from "../deviceLabel";
 import { Button } from "./ui";
 
 function fmtTime(value?: number): string {
@@ -13,30 +14,11 @@ function fmtTime(value?: number): string {
   });
 }
 
-/** Les user-agents complets sont illisibles : on extrait navigateur + système. */
-function describeDevice(userAgent?: string): string {
-  if (!userAgent) return "Appareil inconnu";
-  const os =
-    /iPhone|iPad/i.test(userAgent) ? "iOS"
-    : /Android/i.test(userAgent) ? "Android"
-    : /Mac OS X/i.test(userAgent) ? "macOS"
-    : /Windows/i.test(userAgent) ? "Windows"
-    : /Linux/i.test(userAgent) ? "Linux"
-    : null;
-  const browser =
-    /Edg\//i.test(userAgent) ? "Edge"
-    : /Chrome\//i.test(userAgent) && !/Chromium/i.test(userAgent) ? "Chrome"
-    : /Firefox\//i.test(userAgent) ? "Firefox"
-    : /Safari\//i.test(userAgent) ? "Safari"
-    : null;
-  if (browser && os) return `${browser} sur ${os}`;
-  return browser ?? os ?? "Appareil inconnu";
-}
-
 export default function SessionsPanel({ onClose }: { onClose: () => void }) {
   const [sessions, setSessions] = useState<RememberSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   function load() {
     setLoading(true);
@@ -49,10 +31,48 @@ export default function SessionsPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(load, []);
 
+  /**
+   * Piège à focus : la modale est superposée au reste de la page, qui reste dans l'ordre de
+   * tabulation. Sans ça, au clavier, on sortait du panneau sans le fermer et on continuait à
+   * activer les boutons qui se trouvent derrière — dont les boutons de révocation.
+   * `AppMenu` obtient la même chose via useAnchoredPopover ; cette modale-ci ne l'utilise pas.
+   */
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    const precedent = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+
+    const focusables = () =>
+      Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        ) ?? []
+      );
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const cibles = focusables();
+      if (cibles.length === 0) return;
+      const premier = cibles[0];
+      const dernier = cibles[cibles.length - 1];
+      const actif = document.activeElement;
+      if (event.shiftKey && (actif === premier || actif === dialogRef.current)) {
+        event.preventDefault();
+        dernier.focus();
+      } else if (!event.shiftKey && actif === dernier) {
+        event.preventDefault();
+        premier.focus();
+      }
+    };
+
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      precedent?.focus?.(); // rend le focus au bouton qui a ouvert la modale
+    };
   }, [onClose]);
 
   function run(action: Promise<unknown>) {
@@ -67,11 +87,13 @@ export default function SessionsPanel({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Mes appareils connectés"
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="w-full max-w-lg rounded-t-2xl sm:rounded-xl border border-line bg-surface shadow-pop max-h-[85vh] flex flex-col"
+        className="w-full max-w-lg rounded-t-2xl sm:rounded-xl border border-line bg-surface shadow-pop max-h-[85vh] flex flex-col focus:outline-none"
       >
         <header className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="min-w-0">

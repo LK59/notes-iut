@@ -95,3 +95,54 @@ def test_purge_removes_idle_expired_tokens():
 
     cache.purge_expired_remember_tokens()
     assert cache.list_remember_sessions("etudiant-purge") == []
+
+
+def test_rotation_preserves_absolute_deadline():
+    """Régression : chaque /api/refresh recréait le jeton à neuf, donc repoussait l'échéance
+    absolue de 30 jours. Un appareil utilisé régulièrement ne redemandait jamais le mot de
+    passe, alors que le CAS couvre aussi mail, VPN et ENT."""
+    import time
+
+    from app.cache.db import _connect
+
+    cache.delete_all_remember_sessions("etudiant-rotation")
+    token = cache.create_remember_token("etudiant-rotation", "mdp", "ua-test", "127.0.0.1")
+
+    il_y_a_20_jours = time.time() - 20 * 24 * 3600
+    conn = _connect()
+    conn.execute(
+        "UPDATE remember_tokens SET created_at = ?, expires_at = ? WHERE username = ?",
+        (il_y_a_20_jours, il_y_a_20_jours + 30 * 24 * 3600, "etudiant-rotation"),
+    )
+    conn.commit()
+    avant = cache.list_remember_sessions("etudiant-rotation")[0]["expires_at"]
+
+    nouveau = cache.rotate_remember_token(token, "etudiant-rotation", "mdp", "ua-test", "127.0.0.1")
+    apres = cache.list_remember_sessions("etudiant-rotation")[0]
+
+    assert apres["expires_at"] == avant  # il reste 10 jours, pas 30
+    assert cache.get_remember_credentials(nouveau, "ua-test", "127.0.0.1") == ("etudiant-rotation", "mdp")
+    assert cache.get_remember_credentials(token, "ua-test", "127.0.0.1") is None
+    cache.delete_all_remember_sessions("etudiant-rotation")
+
+
+def test_rotation_refuses_a_token_past_its_absolute_deadline():
+    """Au bout de 30 jours, la rotation ne doit pas redonner un jeton utilisable : c'est
+    tout l'intérêt du plafond."""
+    import time
+
+    from app.cache.db import _connect
+
+    cache.delete_all_remember_sessions("etudiant-plafond")
+    token = cache.create_remember_token("etudiant-plafond", "mdp", "ua-test", "127.0.0.1")
+    il_y_a_31_jours = time.time() - 31 * 24 * 3600
+    conn = _connect()
+    conn.execute(
+        "UPDATE remember_tokens SET created_at = ? WHERE username = ?",
+        (il_y_a_31_jours, "etudiant-plafond"),
+    )
+    conn.commit()
+
+    nouveau = cache.rotate_remember_token(token, "etudiant-plafond", "mdp", "ua-test", "127.0.0.1")
+    assert cache.get_remember_credentials(nouveau, "ua-test", "127.0.0.1") is None
+    cache.delete_all_remember_sessions("etudiant-plafond")
