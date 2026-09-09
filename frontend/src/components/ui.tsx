@@ -9,6 +9,27 @@ import { useId, useState, type ReactNode } from "react";
    états ouverts/fermés identiques d'un bloc à l'autre.
    ────────────────────────────────────────────────────────────────────────── */
 
+/**
+ * Gestionnaire clavier d'un `role="button"` porté par un `div`.
+ *
+ * L'ARIA demande Entrée **et** la barre d'espace ; seul Entrée était géré, donc Espace
+ * faisait défiler la page au lieu de déplier la ligne. Le `preventDefault` supprime ce
+ * défilement.
+ *
+ * L'événement venant d'un champ imbriqué est ignoré : ces lignes contiennent les champs
+ * de saisie des notes simulées, et sans ce filtre, taper une espace dans un champ aurait
+ * replié la ligne (Entrée y déclenchait déjà la sélection).
+ */
+export function activationHandler(action: () => void) {
+  return (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const cible = event.target as HTMLElement;
+    if (cible !== event.currentTarget && cible.closest?.("input, textarea, select, button, a")) return;
+    event.preventDefault();
+    action();
+  };
+}
+
 export function Chevron({ open, className = "" }: { open: boolean; className?: string }) {
   return (
     <svg

@@ -12,7 +12,7 @@ import {
   ueWeightInGlobal,
 } from "../simulator";
 import Chip from "./Chip";
-import { Card, Chevron, Collapsible, comparedToClass, Grade } from "./ui";
+import { activationHandler, Card, Chevron, Collapsible, comparedToClass, Grade } from "./ui";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
@@ -133,9 +133,9 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                         role={hasEvaluations ? "button" : undefined}
                         tabIndex={hasEvaluations ? 0 : undefined}
                         onClick={() => hasEvaluations && toggle(setOpenModules, moduleKey)}
-                        onKeyDown={(event) =>
-                          event.key === "Enter" && hasEvaluations && toggle(setOpenModules, moduleKey)
-                        }
+                        onKeyDown={activationHandler(
+                          () => hasEvaluations && toggle(setOpenModules, moduleKey)
+                        )}
                         className={`flex items-center justify-between gap-3 px-4 py-3 ${
                           hasEvaluations ? "cursor-pointer hover:bg-inset" : ""
                         }`}
@@ -171,7 +171,7 @@ export default function SimpleView({ releve, overrides, newIds, selectedKey, onS
                                   role="button"
                                   tabIndex={0}
                                   onClick={() => onSelect(isSelected ? null : key)}
-                                  onKeyDown={(event) => event.key === "Enter" && onSelect(isSelected ? null : key)}
+                                  onKeyDown={activationHandler(() => onSelect(isSelected ? null : key))}
                                   className={`flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 cursor-pointer transition-colors ${
                                     isSelected ? "bg-accent-soft" : "hover:bg-inset"
                                   }`}

@@ -16,7 +16,7 @@ import {
   ueWeightInGlobal,
 } from "../simulator";
 import Chip from "./Chip";
-import { Card, Chevron, Collapsible, Grade, NoteInput } from "./ui";
+import { activationHandler, Card, Chevron, Collapsible, Grade, NoteInput } from "./ui";
 
 const PromoHistogram = lazy(() => import("./PromoHistogram"));
 
@@ -175,9 +175,9 @@ function UeTable({
                             role={hasEvaluations ? "button" : undefined}
                             tabIndex={hasEvaluations ? 0 : undefined}
                             onClick={() => hasEvaluations && toggleModule(moduleKey)}
-                            onKeyDown={(event) =>
-                              event.key === "Enter" && hasEvaluations && toggleModule(moduleKey)
-                            }
+                            onKeyDown={activationHandler(
+                              () => hasEvaluations && toggleModule(moduleKey)
+                            )}
                             className={`flex items-start justify-between gap-2 px-3 py-2 ${
                               hasEvaluations ? "cursor-pointer rounded-t-lg hover:bg-inset" : ""
                             }`}
@@ -231,9 +231,9 @@ function UeTable({
                                         role="button"
                                         tabIndex={0}
                                         onClick={() => onSelect(isSelected ? null : key)}
-                                        onKeyDown={(event) =>
-                                          event.key === "Enter" && onSelect(isSelected ? null : key)
-                                        }
+                                        onKeyDown={activationHandler(() =>
+                                          onSelect(isSelected ? null : key)
+                                        )}
                                         className={`flex items-start justify-between gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors ${
                                           isSelected ? "bg-accent-soft" : "bg-surface hover:bg-inset"
                                         }`}
