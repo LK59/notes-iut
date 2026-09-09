@@ -135,10 +135,6 @@ et le package `cache/`.
   troisième — quatre pastilles débordaient sur une seconde ligne en laissant la dernière seule, et
   le rythme se cassait à chaque carte. Ne pas répéter non plus un poids déductible du niveau
   au-dessus (le `% gén.` d'un module se déduit de celui de son UE).
-- **Banc d'essai** : `frontend/dev/` + `/harness.html` rendent les vues authentifiées avec un
-  relevé inventé, via `vite dev` (voir `dev/README.md`). C'est le seul moyen de regarder ces écrans
-  sans identifiants CAS. Absent du bundle de production — le vérifier après tout changement du
-  build : `grep -rl "releveFictif" frontend/dist` doit ne rien renvoyer.
 - **Couleur de simulation.** L'ocre (`sim`) ne s'applique qu'aux notes d'évaluation individuelles
   saisies par l'utilisateur. Les agrégats (moyennes d'UE, de module, générale) ne la portent
   jamais : leur état simulé passe par la bordure de carte et une pastille.

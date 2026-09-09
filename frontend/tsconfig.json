@@ -15,6 +15,6 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["src", "dev"],
+  "include": ["src"],
   "exclude": ["src/sw.ts"]
 }
