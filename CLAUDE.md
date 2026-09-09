@@ -110,7 +110,10 @@ et le package `cache/`.
   que l'absolue présentait comme actif un appareil déjà mort. Chaque `/api/refresh` fait tourner le
   jeton (`rotate_remember_token`), qui **reporte `created_at`** : recréer le jeton à neuf repoussait
   l'échéance absolue à chaque usage, et un appareil utilisé régulièrement ne redemandait jamais le
-  mot de passe — alors que le CAS couvre aussi mail, VPN et ENT.
+  mot de passe — alors que le CAS couvre aussi mail, VPN et ENT. Les deux échéances ont des
+  fenêtres d'avertissement différentes (`push_polling.py`) : 24 h pour l'inactivité, qu'ouvrir
+  l'app suffit à rattraper, mais 72 h pour le plafond absolu, qui exige de ressaisir le mot de
+  passe et dont l'expiration coupe le polling, donc les notifications.
 - **Refus du CAS.** Seul un message reconnu comme « identifiants incorrects » lève
   `InvalidCredentials` ; tout autre refus (compte verrouillé, mot de passe expiré, MFA) lève
   `CasAuthenticationRefused`. La distinction compte : le polling révoque **tous** les

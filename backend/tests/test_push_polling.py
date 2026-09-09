@@ -272,3 +272,47 @@ def test_le_releve_embarque_est_ignore_sil_porte_sur_un_autre_semestre():
 
     assert (semestre_id, obtenu) == ("1080", attendu)
     assert scodoc.calls == ["1080"]
+
+
+def _deadlines(idle_dans_secondes: float, absolu_dans_secondes: float):
+    import time
+
+    now = time.time()
+    return {
+        "token_hash": "peu-importe",
+        "idle_deadline": now + idle_dans_secondes,
+        "absolute_deadline": now + absolu_dans_secondes,
+    }
+
+
+def test_absolute_reauth_warning_leaves_three_days(monkeypatch):
+    """L'expiration du plafond absolu coupe le polling — donc les notifications — et exige
+    de ressaisir le mot de passe. 24 h d'avance, annoncées par une notification qu'on peut
+    balayer ou rater pendant un week-end, laissaient la coupure passer en silence."""
+    from app import push_polling
+
+    heure = 3600
+    monkeypatch.setattr(
+        push_polling.cache, "get_background_token_deadlines",
+        lambda username: _deadlines(30 * 24 * heure, 60 * heure),
+    )
+    assert push_polling._reauth_warning_for_username("etu") == "absolute"
+
+
+def test_idle_reauth_warning_stays_at_one_day(monkeypatch):
+    """L'inactivité se rattrape en ouvrant l'app, et l'ouvrir suffit à repousser l'échéance :
+    prévenir 3 jours à l'avance notifierait quiconque passe 4 jours sans regarder ses notes."""
+    from app import push_polling
+
+    heure = 3600
+    monkeypatch.setattr(
+        push_polling.cache, "get_background_token_deadlines",
+        lambda username: _deadlines(60 * heure, 30 * 24 * heure),
+    )
+    assert push_polling._reauth_warning_for_username("etu") is None
+
+    monkeypatch.setattr(
+        push_polling.cache, "get_background_token_deadlines",
+        lambda username: _deadlines(12 * heure, 30 * 24 * heure),
+    )
+    assert push_polling._reauth_warning_for_username("etu") == "idle"

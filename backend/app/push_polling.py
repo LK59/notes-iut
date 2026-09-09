@@ -31,7 +31,15 @@ PUSH_BACKOFF_MAX_SECONDS = int(os.environ.get("PUSH_BACKOFF_MAX_SECONDS", "3600"
 # une rafale de logins synchronisés depuis la seule IP du serveur.
 PUSH_TICK_INTERVAL_SECONDS = int(os.environ.get("PUSH_TICK_INTERVAL_SECONDS", "60"))
 PUSH_STAGGER_WINDOW_SECONDS = int(os.environ.get("PUSH_STAGGER_WINDOW_SECONDS", "300"))
-REAUTH_WARNING_WINDOW_SECONDS = 24 * 3600
+# Deux fenêtres distinctes, parce que les deux échéances ne se rattrapent pas de la même façon.
+# Inactivité : il suffit d'ouvrir l'app, et le simple fait de l'ouvrir remet le compteur à zéro —
+# prévenir 3 jours à l'avance reviendrait à notifier quiconque passe 4 jours sans regarder ses
+# notes, ce qui est banal.
+IDLE_REAUTH_WARNING_WINDOW_SECONDS = 24 * 3600
+# Plafond absolu : il exige de ressaisir le mot de passe, et son expiration coupe le polling —
+# donc les notifications. 24h d'avance, annoncées par une notification qu'on peut balayer ou
+# rater pendant un week-end, laissaient passer silencieusement la coupure.
+ABSOLUTE_REAUTH_WARNING_WINDOW_SECONDS = 72 * 3600
 VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:notes-iut@example.com")
 
 
@@ -292,9 +300,9 @@ def _reauth_warning_for_username(username: str) -> str | None:
     if not deadlines:
         return None
     now = time.time()
-    if 0 < deadlines["idle_deadline"] - now <= REAUTH_WARNING_WINDOW_SECONDS:
+    if 0 < deadlines["idle_deadline"] - now <= IDLE_REAUTH_WARNING_WINDOW_SECONDS:
         return "idle"
-    if 0 < deadlines["absolute_deadline"] - now <= REAUTH_WARNING_WINDOW_SECONDS:
+    if 0 < deadlines["absolute_deadline"] - now <= ABSOLUTE_REAUTH_WARNING_WINDOW_SECONDS:
         return "absolute"
     return None
 
@@ -311,9 +319,9 @@ def _maybe_send_reauth_warning(username: str) -> None:
     warned = cache.get_reauth_warning_state(username)
     subs: list[dict] | None = None
 
-    def _warn_once(deadline: float, field: str, message: dict) -> None:
+    def _warn_once(deadline: float, field: str, fenetre: float, message: dict) -> None:
         nonlocal subs
-        if not (0 < deadline - now <= REAUTH_WARNING_WINDOW_SECONDS):
+        if not (0 < deadline - now <= fenetre):
             return
         if warned.get(field) == token_hash:
             return
@@ -328,6 +336,7 @@ def _maybe_send_reauth_warning(username: str) -> None:
     _warn_once(
         deadlines["idle_deadline"],
         "idle_warning_token_hash",
+        IDLE_REAUTH_WARNING_WINDOW_SECONDS,
         {
             "title": "Ouvre l'app pour garder tes notifications",
             "body": "Tu n'as pas ouvert Notes IUT depuis un moment : ta connexion va bientôt expirer.",
@@ -338,9 +347,10 @@ def _maybe_send_reauth_warning(username: str) -> None:
     _warn_once(
         deadlines["absolute_deadline"],
         "absolute_warning_token_hash",
+        ABSOLUTE_REAUTH_WARNING_WINDOW_SECONDS,
         {
             "title": "Reconnexion nécessaire bientôt",
-            "body": "Reconnecte-toi dans l'app pour continuer à recevoir tes notes.",
+            "body": "Ta connexion expire dans quelques jours. Reconnecte-toi pour continuer à recevoir tes notes.",
             "url": "/",
             "tag": "notes-iut-reauth-absolute",
         },
