@@ -17,12 +17,14 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import cache
 from .errors import AppError
-from .logging_utils import logger
+from .logging_utils import configure_logging, logger
 from .push_polling import push_polling_loop
 from .routes import admin, auth, data, health, push
 from .routes.auth import _cleanup_login_jobs
 from .sessions import restore_sessions
 
+
+configure_logging()
 
 LOGIN_JOBS_CLEANUP_INTERVAL_SECONDS = 60
 

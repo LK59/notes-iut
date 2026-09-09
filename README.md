@@ -196,6 +196,7 @@ Copier [.env.example](.env.example) vers `.env` :
 | --- | --- |
 | `SECRET_KEY` | Chiffrement des identifiants mémorisés (obligatoire) |
 | `ADMIN_USERNAMES` | Liste séparée par des virgules ouvrant `/api/admin/*` |
+| `LOG_LEVEL` | Verbosité des logs applicatifs (`INFO` par défaut) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Web Push (générés dans `data/` si absents) |
 | `PUSH_POLL_INTERVAL` | Intervalle de veille des nouvelles notes |
 | `PUSH_MAX_CONCURRENT_CHECKS` | Comptes vérifiés en parallèle |
